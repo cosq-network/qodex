@@ -218,7 +218,7 @@ func (a *Agent) compactContext() {
 	if len(rest) <= 4 {
 		return
 	}
-	keepRecent := 4
+	keepRecent := 8
 	if len(rest) < keepRecent {
 		keepRecent = len(rest)
 	}

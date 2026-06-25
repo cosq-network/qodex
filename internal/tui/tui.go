@@ -118,7 +118,7 @@ func newModel(a *agent.Agent, messages []store.Message, autoApprove bool) Model 
 	}
 
 	events := make(chan agent.Event, 500)
-	approvals := make(chan approvalPrompt)
+	approvals := make(chan approvalPrompt, 1)
 	streamCh := make(chan string, 200)
 	a.SetObserver(agent.ObserverFunc(func(event agent.Event) {
 		select {

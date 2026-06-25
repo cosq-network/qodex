@@ -87,46 +87,172 @@ func (r *Registry) DiffPreview(name string, raw json.RawMessage) (string, error)
 	}
 }
 
+type diffEdit struct {
+	op   byte
+	line string
+}
+
 func generateDiff(filename, old, new string) string {
-	oldLines := strings.Split(old, "\n")
-	newLines := strings.Split(new, "\n")
-	if len(oldLines) > 0 && oldLines[len(oldLines)-1] == "" {
-		oldLines = oldLines[:len(oldLines)-1]
-	}
-	if len(newLines) > 0 && newLines[len(newLines)-1] == "" {
-		newLines = newLines[:len(newLines)-1]
-	}
+	oldLines := splitLines(old)
+	newLines := splitLines(new)
+
 	var b strings.Builder
 	b.WriteString("--- a/" + filename + "\n")
 	b.WriteString("+++ b/" + filename + "\n")
-	if old == "" {
+
+	if len(oldLines) == 0 && len(newLines) == 0 {
+		return b.String()
+	}
+	if len(oldLines) == 0 {
 		b.WriteString("@@ -0,0 +1," + fmt.Sprint(len(newLines)) + " @@\n")
 		for _, line := range newLines {
 			b.WriteString("+" + line + "\n")
 		}
 		return b.String()
 	}
-	// Simple line-by-line diff
-	maxLen := len(oldLines)
-	if len(newLines) > maxLen {
-		maxLen = len(newLines)
+	if len(newLines) == 0 {
+		b.WriteString("@@ -1," + fmt.Sprint(len(oldLines)) + " +0,0 @@\n")
+		for _, line := range oldLines {
+			b.WriteString("-" + line + "\n")
+		}
+		return b.String()
 	}
-	b.WriteString("@@ -1," + fmt.Sprint(len(oldLines)) + " +1," + fmt.Sprint(len(newLines)) + " @@\n")
-	for i := 0; i < maxLen; i++ {
-		if i < len(oldLines) && i < len(newLines) {
-			if oldLines[i] != newLines[i] {
-				b.WriteString("-" + oldLines[i] + "\n")
-				b.WriteString("+" + newLines[i] + "\n")
-			} else {
-				b.WriteString(" " + oldLines[i] + "\n")
+
+	lcs := lcsTable(oldLines, newLines)
+	edits := backtrack(oldLines, newLines, lcs)
+
+	// Walk the edit list and emit hunks with 1-line context
+	oldPos, newPos := 1, 1
+	i := 0
+	for i < len(edits) {
+		// Skip unchanged lines at start (context before first hunk)
+		for i < len(edits) && edits[i].op == ' ' {
+			i++
+			oldPos++
+			newPos++
+		}
+		if i >= len(edits) {
+			break
+		}
+
+		// Find the end of this hunk
+		hunkStart := i
+		ctxBefore := 0
+		for hunkStart > 0 && edits[hunkStart-1].op == ' ' && ctxBefore < 1 {
+			hunkStart--
+			ctxBefore++
+		}
+		hunkEnd := i
+		for hunkEnd < len(edits) && edits[hunkEnd].op != ' ' {
+			hunkEnd++
+		}
+		ctxAfter := 0
+		tempEnd := hunkEnd
+		for tempEnd < len(edits) && edits[tempEnd].op == ' ' && ctxAfter < 1 {
+			tempEnd++
+			ctxAfter++
+		}
+
+		// Compute hunk position
+		hunkOld := oldPos - ctxBefore
+		hunkNew := newPos - ctxBefore
+		hunkOldLen := 0
+		hunkNewLen := 0
+		for j := hunkStart; j < tempEnd; j++ {
+			switch edits[j].op {
+			case '-':
+				hunkOldLen++
+			case '+':
+				hunkNewLen++
+			default:
+				hunkOldLen++
+				hunkNewLen++
 			}
-		} else if i < len(oldLines) {
-			b.WriteString("-" + oldLines[i] + "\n")
-		} else {
-			b.WriteString("+" + newLines[i] + "\n")
+		}
+		if hunkOldLen == 0 {
+			hunkOldLen = 1
+		}
+		if hunkNewLen == 0 {
+			hunkNewLen = 1
+		}
+
+		b.WriteString(fmt.Sprintf("@@ -%d,%d +%d,%d @@\n", hunkOld, hunkOldLen, hunkNew, hunkNewLen))
+		for j := hunkStart; j < tempEnd; j++ {
+			b.WriteByte(edits[j].op)
+			b.WriteString(edits[j].line)
+			b.WriteByte('\n')
+		}
+
+		// Advance position counters past the hunk and its trailing context
+		for j := i; j < tempEnd; j++ {
+			switch edits[j].op {
+			case '-':
+				oldPos++
+			case '+':
+				newPos++
+			default:
+				oldPos++
+				newPos++
+			}
+		}
+		i = tempEnd
+	}
+
+	return b.String()
+}
+
+func lcsTable(a, b []string) [][]int {
+	m, n := len(a), len(b)
+	dp := make([][]int, m+1)
+	for i := range dp {
+		dp[i] = make([]int, n+1)
+	}
+	for i := 1; i <= m; i++ {
+		for j := 1; j <= n; j++ {
+			if a[i-1] == b[j-1] {
+				dp[i][j] = dp[i-1][j-1] + 1
+			} else if dp[i-1][j] >= dp[i][j-1] {
+				dp[i][j] = dp[i-1][j]
+			} else {
+				dp[i][j] = dp[i][j-1]
+			}
 		}
 	}
-	return b.String()
+	return dp
+}
+
+func backtrack(a, b []string, lcs [][]int) []diffEdit {
+	var stack []diffEdit
+	i, j := len(a), len(b)
+	for i > 0 || j > 0 {
+		if i > 0 && j > 0 && a[i-1] == b[j-1] {
+			stack = append(stack, diffEdit{' ', a[i-1]})
+			i--
+			j--
+		} else if j > 0 && (i == 0 || lcs[i][j-1] >= lcs[i-1][j]) {
+			stack = append(stack, diffEdit{'+', b[j-1]})
+			j--
+		} else if i > 0 {
+			stack = append(stack, diffEdit{'-', a[i-1]})
+			i--
+		}
+	}
+	edits := make([]diffEdit, len(stack))
+	for k := range stack {
+		edits[k] = stack[len(stack)-1-k]
+	}
+	return edits
+}
+
+func splitLines(s string) []string {
+	if s == "" {
+		return nil
+	}
+	lines := strings.Split(s, "\n")
+	if lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
 }
 
 func (r *Registry) Prompt() string {
@@ -433,10 +559,15 @@ func rejectDangerousArgv(argv []string) error {
 	if len(argv) == 0 {
 		return nil
 	}
-	if strings.EqualFold(filepath.Base(argv[0]), "rm") {
+	base := strings.ToLower(filepath.Base(argv[0]))
+	if base == "rm" {
+		hasNoPreserve := false
 		for _, arg := range argv[1:] {
 			if arg == "/" || strings.HasPrefix(arg, "/") && (strings.Contains(arg, "*") || strings.Contains(arg, "..")) {
 				return fmt.Errorf("refusing dangerous command: %s", strings.Join(argv, " "))
+			}
+			if arg == "--no-preserve-root" {
+				hasNoPreserve = true
 			}
 			if strings.Contains(arg, "rf") && strings.HasPrefix(arg, "-") {
 				for _, target := range argv[1:] {
@@ -446,8 +577,14 @@ func rejectDangerousArgv(argv []string) error {
 				}
 			}
 		}
+		if hasNoPreserve {
+			for _, arg := range argv[1:] {
+				if arg == "/" {
+					return fmt.Errorf("refusing dangerous command: %s", strings.Join(argv, " "))
+				}
+			}
+		}
 	}
-	base := strings.ToLower(filepath.Base(argv[0]))
 	if base == "mkfs" || strings.HasPrefix(base, "mkfs.") {
 		return fmt.Errorf("refusing dangerous command: %s", strings.Join(argv, " "))
 	}

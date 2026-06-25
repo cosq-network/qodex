@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -52,6 +53,15 @@ func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`pragma journal_mode=wal`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("enable wal: %w", err)
+	}
+	if _, err := db.Exec(`pragma busy_timeout=5000`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("set busy timeout: %w", err)
 	}
 	s := &Store{db: db}
 	if err := s.migrate(context.Background()); err != nil {
@@ -145,7 +155,13 @@ func (s *Store) GetSession(ctx context.Context, id int64) (Session, error) {
 }
 
 func (s *Store) ListToolCalls(ctx context.Context, sessionID int64) ([]ToolCallRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,session_id,name,arguments_json,status,created_at from tool_calls where session_id=? order by id asc`, sessionID)
+	query := `select tc.id,tc.session_id,tc.name,tc.arguments_json,tc.status,tc.created_at,
+		tr.id,tr.tool_call_id,tr.output,tr.error,tr.created_at
+		from tool_calls tc
+		left join tool_results tr on tr.tool_call_id = tc.id
+			and tr.id = (select max(id) from tool_results where tool_call_id = tc.id)
+		where tc.session_id=? order by tc.id asc`
+	rows, err := s.db.QueryContext(ctx, query, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -154,25 +170,25 @@ func (s *Store) ListToolCalls(ctx context.Context, sessionID int64) ([]ToolCallR
 	for rows.Next() {
 		var r ToolCallRecord
 		var created string
-		if err := rows.Scan(&r.ID, &r.SessionID, &r.Name, &r.Arguments, &r.Status, &created); err != nil {
+		var resultID, resultToolCallID sql.NullInt64
+		var resultOutput, resultError, resultCreated sql.NullString
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.Name, &r.Arguments, &r.Status, &created,
+			&resultID, &resultToolCallID, &resultOutput, &resultError, &resultCreated); err != nil {
 			return nil, err
 		}
 		r.CreatedAt, _ = time.Parse(time.RFC3339, created)
-		r.Result = s.getToolResult(ctx, r.ID)
+		if resultID.Valid {
+			r.Result = &ToolResultRecord{
+				ID:        resultID.Int64,
+				ToolCallID: resultToolCallID.Int64,
+				Output:    resultOutput.String,
+				Error:     resultError.String,
+			}
+			r.Result.CreatedAt, _ = time.Parse(time.RFC3339, resultCreated.String)
+		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
-}
-
-func (s *Store) getToolResult(ctx context.Context, toolCallID int64) *ToolResultRecord {
-	row := s.db.QueryRowContext(ctx, `select id,tool_call_id,output,error,created_at from tool_results where tool_call_id=? order by id desc limit 1`, toolCallID)
-	var r ToolResultRecord
-	var created string
-	if err := row.Scan(&r.ID, &r.ToolCallID, &r.Output, &r.Error, &created); err != nil {
-		return nil
-	}
-	r.CreatedAt, _ = time.Parse(time.RFC3339, created)
-	return &r
 }
 
 func (s *Store) ExportSession(ctx context.Context, sessionID int64) (ExportData, error) {

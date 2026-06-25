@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/benoybose/locha/internal/config"
@@ -68,14 +69,14 @@ func TestAgentLoopWithFakeModelServer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var chatCalls int
+	var chatCalls atomic.Int32
 	client := model.NewClient("http://fake.local/v1", "fake")
 	client.HTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path != "/v1/chat/completions" {
 			return response(404, `{"error":"not found"}`), nil
 		}
-		chatCalls++
-		if chatCalls == 1 {
+		chatCalls.Add(1)
+		if chatCalls.Load() == 1 {
 			return jsonResponse(map[string]interface{}{
 				"choices": []map[string]interface{}{{
 					"message": map[string]string{
@@ -113,8 +114,8 @@ func TestAgentLoopWithFakeModelServer(t *testing.T) {
 	if !strings.Contains(got, "Locha test project") {
 		t.Fatalf("unexpected response: %q", got)
 	}
-	if chatCalls != 2 {
-		t.Fatalf("chat calls = %d, want 2", chatCalls)
+	if chatCalls.Load() != 2 {
+		t.Fatalf("chat calls = %d, want 2", chatCalls.Load())
 	}
 }
 
