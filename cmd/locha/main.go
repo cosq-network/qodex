@@ -49,6 +49,7 @@ func rootCmd() *cobra.Command {
 	cmd.AddCommand(doctorCmd(&cfgPath))
 	cmd.AddCommand(skillsCmd())
 	cmd.AddCommand(sessionsCmd(&cfgPath, &yes))
+	cmd.AddCommand(reviewCmd(&cfgPath, &yes))
 	return cmd
 }
 
@@ -408,6 +409,42 @@ func sessionsCmd(cfgPath *string, yes *bool) *cobra.Command {
 		},
 	})
 	return cmd
+}
+
+func reviewCmd(cfgPath *string, yes *bool) *cobra.Command {
+	reviewPrompt := `Review the current state of uncommitted changes in this repository.
+
+1. First, call review_changes with scope="all" to get an overview of what changed.
+2. Read any files with significant changes to understand the context.
+3. For each changed file, consider: correctness, security, style, edge cases, and test coverage.
+4. Produce a structured review covering:
+   - Summary of changes
+   - Potential issues or concerns
+   - Suggestions for improvement
+   - Missing tests or documentation
+5. Be specific and reference line numbers from the diff.`
+
+	return &cobra.Command{
+		Use:   "review",
+		Short: "Review uncommitted changes in the repository",
+		Long:  "Analyzes uncommitted git changes and produces a structured code review.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			rt, err := buildRuntime(*cfgPath, *yes, false, 0)
+			if err != nil {
+				return err
+			}
+			defer rt.Close()
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Minute)
+			defer cancel()
+			result, err := rt.Agent.Run(ctx, reviewPrompt)
+			if err != nil {
+				return err
+			}
+			fmt.Println(result)
+			return nil
+		},
+	}
 }
 
 type runtime struct {

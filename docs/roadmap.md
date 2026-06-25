@@ -141,13 +141,13 @@ Goal: add higher-signal development tools so the agent can inspect, test, format
 | Status | Activity | Area | Notes |
 | --- | --- | --- | --- |
 | completed | Diff preview | Tools/TUI | Show patch/file changes before approval via inline diff rendering. |
-| planned | Tool output artifacts | Tools/Persistence | Persist large raw outputs and send summaries to the model. |
+| completed | Tool output artifacts | Tools/Persistence | Persist large raw outputs and send summaries to the model via output_artifacts DB table. |
 | planned | LSP diagnostics | Tools | Add language-server diagnostics tool. |
 | planned | LSP definition/references | Tools | Add navigation tools for supported languages. |
-| planned | Test runner tool | Tools | Project-aware test command discovery and execution. |
-| planned | Formatter tool | Tools | Run formatter with approval and file scope. |
-| planned | Project index | Tools/Context | Maintain a lightweight file and symbol index. |
-| planned | Review mode | Agent/Tools | Purpose-built flow for reviewing uncommitted changes. |
+| completed | Test runner tool | Tools | Project-aware test command discovery and execution for go, pytest, and jest. |
+| completed | Formatter tool | Tools | Run formatter (go fmt, ruff, black, prettier) with approval and file scope. |
+| completed | Project index | Tools/Context | Maintain a lightweight file and symbol index with per-language regex extraction. |
+| completed | Review mode | Agent/Tools | Purpose-built `locha review` CLI command + `review_changes` tool for uncommitted change analysis. |
 
 ## Phase 6: Backend Expansion
 

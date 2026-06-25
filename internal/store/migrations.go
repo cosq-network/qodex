@@ -58,6 +58,21 @@ create table if not exists tool_results (
   created_at text not null
 );`,
 	},
+	{
+		version: 3,
+		up: `create table if not exists output_artifacts (
+  id integer primary key autoincrement,
+  session_id integer not null,
+  tool_call_id integer not null,
+  tool_name text not null,
+  summary text not null default '',
+  content text not null,
+  content_type text not null default 'text',
+  size integer not null default 0,
+  created_at text not null
+);
+create index if not exists idx_output_artifacts_session on output_artifacts(session_id);`,
+	},
 }
 
 func (s *Store) migrate(ctx context.Context) error {

@@ -434,6 +434,16 @@ func (a *Agent) executeTool(ctx context.Context, call toolCall) (string, error) 
 	}
 
 	res, err := tool.Execute(ctx, call.Arguments)
+	if len(res.Content) > store.ArtifactThreshold {
+		summary := res.Summary
+		if summary == "" {
+			summary = fmt.Sprintf("Large output from %s (%d bytes)", call.Name, len(res.Content))
+		}
+		artifactID, aerr := a.store.SaveArtifact(ctx, a.sessionID, callID, call.Name, summary, res.Content, "text")
+		if aerr == nil {
+			res.Content = fmt.Sprintf("[Output stored as artifact #%d. Summary: %s]", artifactID, summary)
+		}
+	}
 	raw, _ := json.Marshal(res)
 	errText := ""
 	if err != nil {

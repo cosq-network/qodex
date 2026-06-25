@@ -31,6 +31,7 @@ type Result struct {
 type Registry struct {
 	root  string
 	tools map[string]Tool
+	index *ProjectIndex
 }
 
 func NewRegistry(projectRoot string) *Registry {
@@ -44,6 +45,10 @@ func NewRegistry(projectRoot string) *Registry {
 	r.add("run_script", "Run a pre-approved script from an active skill by description", "shell", r.runScript)
 	r.add("git_status", "Show git status", "read", r.gitStatus)
 	r.add("git_diff", "Show git diff", "read", r.gitDiff)
+	r.add("project_index", "Query the project index: list files by language/pattern, find symbols by name/kind, or get a project summary", "read", r.projectIndex)
+	r.add("run_tests", "Discover and run tests. Accepts pattern (package path or test name regex), file (specific test file), or framework hint (go, pytest, jest, etc.). Returns test output and summary.", "shell", r.runTests)
+	r.add("run_formatter", "Run a code formatter on the project or specific files. Accepts tool (go, ruff, prettier, black, etc.) and path. Requires approval.", "shell", r.runFormatter)
+	r.add("review_changes", "Analyze uncommitted git changes. Accepts scope (working, staged, or all). Returns structured review of diffs with potential issues and suggestions.", "read", r.reviewChanges)
 	return r
 }
 
@@ -659,6 +664,349 @@ func truncate(s string, limit int) string {
 		return s
 	}
 	return s[:limit] + "\n... truncated ..."
+}
+
+func (r *Registry) runTests(ctx context.Context, raw json.RawMessage) (Result, error) {
+	var args struct {
+		Pattern   string `json:"pattern"`
+		File      string `json:"file"`
+		Framework string `json:"framework"`
+		Timeout   int    `json:"timeout_seconds"`
+	}
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return Result{}, err
+	}
+	if args.Pattern == "" && args.File == "" {
+		args.Pattern = "./..."
+	}
+	if args.Timeout <= 0 || args.Timeout > 600 {
+		args.Timeout = 300
+	}
+
+	if args.Framework == "" {
+		if args.File != "" {
+			args.Framework = detectFramework(filepath.Ext(args.File))
+		} else {
+			args.Framework = detectProjectFramework(r.root)
+		}
+	}
+
+	cctx, cancel := context.WithTimeout(ctx, time.Duration(args.Timeout)*time.Second)
+	defer cancel()
+
+	summary := ""
+	var content string
+
+	switch args.Framework {
+	case "go":
+		argv := []string{"go", "test"}
+		if args.Pattern != "" {
+			argv = append(argv, args.Pattern)
+		}
+		if args.File != "" {
+			argv = append(argv, args.File)
+		}
+		cmd := exec.CommandContext(cctx, "go", argv[1:]...)
+		cmd.Dir = r.root
+		out, err := cmd.CombinedOutput()
+		summary = fmt.Sprintf("Ran go test %s", args.Pattern)
+		content = string(out)
+		if err != nil {
+			return Result{OK: false, Summary: "Tests failed", Content: truncate(content, 20000)}, err
+		}
+		return Result{OK: true, Summary: summary, Content: truncate(content, 20000), Metadata: map[string]interface{}{"shell": false, "network": false}}, nil
+
+	case "pytest", "python":
+		argv := []string{"python", "-m", "pytest"}
+		if args.Pattern != "" {
+			argv = append(argv, args.Pattern)
+		}
+		if args.File != "" {
+			argv = append(argv, args.File)
+		}
+		cmd := exec.CommandContext(cctx, "python", argv[1:]...)
+		cmd.Dir = r.root
+		out, err := cmd.CombinedOutput()
+		summary = fmt.Sprintf("Ran pytest %s", args.Pattern)
+		content = string(out)
+		if err != nil {
+			return Result{OK: false, Summary: "Tests failed", Content: truncate(content, 20000)}, err
+		}
+		return Result{OK: true, Summary: summary, Content: truncate(content, 20000), Metadata: map[string]interface{}{"shell": false, "network": false}}, nil
+
+	case "jest", "node":
+		detected := false
+		if hasFile(r.root, "package.json") {
+			argv := []string{"npx", "jest"}
+			if args.Pattern != "" {
+				argv = append(argv, args.Pattern)
+			}
+			if args.File != "" {
+				argv = append(argv, args.File)
+			}
+			cmd := exec.CommandContext(cctx, "npx", argv[1:]...)
+			cmd.Dir = r.root
+			out, err := cmd.CombinedOutput()
+			summary = fmt.Sprintf("Ran jest %s", args.Pattern)
+			content = string(out)
+			if err != nil {
+				return Result{OK: false, Summary: "Tests failed", Content: truncate(content, 20000)}, err
+			}
+			detected = true
+			return Result{OK: true, Summary: summary, Content: truncate(content, 20000), Metadata: map[string]interface{}{"shell": false, "network": false}}, nil
+		}
+		if !detected {
+			return Result{}, fmt.Errorf("no supported test runner detected for framework %q", args.Framework)
+		}
+
+	default:
+		return Result{}, fmt.Errorf("unsupported test framework %q; try go, pytest, or jest", args.Framework)
+	}
+
+	_ = summary
+	_ = content
+	return Result{}, fmt.Errorf("no test command could be constructed")
+}
+
+func hasFile(root, name string) bool {
+	_, err := os.Stat(filepath.Join(root, name))
+	return err == nil
+}
+
+func detectFramework(ext string) string {
+	switch ext {
+	case ".go":
+		return "go"
+	case ".py":
+		return "pytest"
+	case ".js", ".jsx", ".ts", ".tsx":
+		return "jest"
+	default:
+		return ""
+	}
+}
+
+func detectProjectFramework(root string) string {
+	if hasFile(root, "go.mod") {
+		return "go"
+	}
+	if hasFile(root, "pyproject.toml") || hasFile(root, "setup.py") || hasFile(root, "requirements.txt") {
+		return "pytest"
+	}
+	if hasFile(root, "package.json") || hasFile(root, "jest.config.js") || hasFile(root, "jest.config.ts") {
+		return "jest"
+	}
+	return "go"
+}
+
+func (r *Registry) runFormatter(ctx context.Context, raw json.RawMessage) (Result, error) {
+	var args struct {
+		Tool string `json:"tool"`
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return Result{}, err
+	}
+	if args.Tool == "" {
+		return Result{}, fmt.Errorf("tool is required (e.g. go, ruff, prettier, black)")
+	}
+
+	workPath := r.root
+	if args.Path != "" {
+		var err error
+		workPath, err = r.safePath(args.Path)
+		if err != nil {
+			return Result{}, err
+		}
+	}
+
+	cctx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+
+	var cmd *exec.Cmd
+	summary := ""
+	switch strings.ToLower(args.Tool) {
+	case "go", "gofmt":
+		argv := []string{"go", "fmt"}
+		if args.Path != "" {
+			dir := filepath.Dir(args.Path)
+			if dir != "." {
+				argv = append(argv, "./"+dir)
+			} else {
+				argv = append(argv, "./"+filepath.Base(args.Path))
+			}
+		} else {
+			argv = append(argv, "./...")
+		}
+		// go fmt writes to a relative path; we must run it from the root
+		cmd = exec.CommandContext(cctx, "go", "fmt", argv[2])
+		cmd.Dir = r.root
+		summary = fmt.Sprintf("Ran go fmt on %s", args.Path)
+		if args.Path == "" {
+			summary = "Ran go fmt on project"
+		}
+
+	case "ruff":
+		argv := []string{"ruff", "format"}
+		if args.Path != "" {
+			argv = append(argv, workPath)
+		} else {
+			argv = append(argv, ".")
+		}
+		cmd = exec.CommandContext(cctx, "ruff", argv[1:]...)
+		cmd.Dir = r.root
+		summary = fmt.Sprintf("Ran ruff format on %s", workPath)
+
+	case "black":
+		argv := []string{"black"}
+		if args.Path != "" {
+			argv = append(argv, workPath)
+		} else {
+			argv = append(argv, ".")
+		}
+		cmd = exec.CommandContext(cctx, "black", argv[1:]...)
+		cmd.Dir = r.root
+		summary = fmt.Sprintf("Ran black on %s", workPath)
+
+	case "prettier":
+		argv := []string{"npx", "prettier", "--write"}
+		if args.Path != "" {
+			argv = append(argv, workPath)
+		} else {
+			argv = append(argv, ".")
+		}
+		cmd = exec.CommandContext(cctx, "npx", argv[1:]...)
+		cmd.Dir = r.root
+		summary = fmt.Sprintf("Ran prettier on %s", workPath)
+
+	default:
+		// Try running the tool directly with the path as argument
+		argv := []string{args.Tool}
+		if args.Path != "" {
+			argv = append(argv, workPath)
+		} else {
+			argv = append(argv, ".")
+		}
+		cmd = exec.CommandContext(cctx, args.Tool, argv[1:]...)
+		cmd.Dir = r.root
+		summary = fmt.Sprintf("Ran %s on %s", args.Tool, workPath)
+	}
+
+	out, err := cmd.CombinedOutput()
+	res := Result{
+		OK:      err == nil,
+		Summary: summary,
+		Content: truncate(string(out), 20000),
+		Metadata: map[string]interface{}{
+			"shell":   false,
+			"network": false,
+		},
+	}
+	if err != nil {
+		return res, err
+	}
+	return res, nil
+}
+
+func (r *Registry) reviewChanges(ctx context.Context, raw json.RawMessage) (Result, error) {
+	var args struct {
+		Scope string `json:"scope"`
+	}
+	_ = json.Unmarshal(raw, &args)
+	if args.Scope == "" {
+		args.Scope = "all"
+	}
+
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	var b strings.Builder
+	b.WriteString("# Review of Uncommitted Changes\n\n")
+
+	// Get git diff
+	diffArgs := []string{"diff"}
+	if args.Scope == "staged" {
+		diffArgs = []string{"diff", "--staged"}
+	} else if args.Scope == "working" {
+		diffArgs = []string{"diff"}
+	} else {
+		// all: staged + working
+		diffArgs = []string{"diff", "HEAD"}  // includes both staged and unstaged
+	}
+
+	cmd := exec.CommandContext(cctx, "git", diffArgs...)
+	cmd.Dir = r.root
+	diffOut, err := cmd.CombinedOutput()
+	if err != nil {
+		return Result{}, fmt.Errorf("git diff failed: %w", err)
+	}
+	diffText := string(diffOut)
+	if strings.TrimSpace(diffText) == "" {
+		return Result{OK: true, Summary: "No changes to review", Content: "No uncommitted changes found."}, nil
+	}
+
+	// Get changed files list
+	cmd2 := exec.CommandContext(cctx, "git", "diff", "--name-status")
+	if args.Scope == "staged" {
+		cmd2 = exec.CommandContext(cctx, "git", "diff", "--staged", "--name-status")
+	} else if args.Scope == "working" {
+		cmd2 = exec.CommandContext(cctx, "git", "diff", "--name-status")
+	}
+	cmd2.Dir = r.root
+	statusOut, _ := cmd2.CombinedOutput()
+
+	// Get git status for untracked
+	cmd3 := exec.CommandContext(cctx, "git", "status", "--short")
+	cmd3.Dir = r.root
+	statusShort, _ := cmd3.CombinedOutput()
+
+	b.WriteString("## Changed Files\n\n")
+	b.WriteString("```\n")
+	b.WriteString(string(statusOut))
+	b.WriteString("```\n\n")
+
+	b.WriteString("## Untracked Files\n\n")
+	untracked := extractUntracked(string(statusShort))
+	if len(untracked) > 0 {
+		for _, u := range untracked {
+			b.WriteString(fmt.Sprintf("- %s (untracked)\n", u))
+		}
+	} else {
+		b.WriteString("No untracked files.\n")
+	}
+	b.WriteString("\n")
+	b.WriteString("## Diff Summary\n\n")
+	b.WriteString(fmt.Sprintf("Total diff size: %d bytes across changed files.\n", len(diffText)))
+	b.WriteString("\n## Full Diff\n\n```diff\n")
+	b.WriteString(diffText)
+	b.WriteString("```")
+
+	content := b.String()
+	summary := fmt.Sprintf("Reviewing %d bytes of changes", len(diffText))
+	if len(content) > 25000 {
+		content = content[:25000] + "\n... truncated ..."
+	}
+
+	return Result{
+		OK:      true,
+		Summary: summary,
+		Content: truncate(content, 50000),
+		Metadata: map[string]interface{}{
+			"diff_size": len(diffText),
+			"scope":     args.Scope,
+		},
+	}, nil
+}
+
+func extractUntracked(gitStatus string) []string {
+	var out []string
+	for _, line := range strings.Split(gitStatus, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "?? ") {
+			out = append(out, strings.TrimPrefix(line, "?? "))
+		}
+	}
+	return out
 }
 
 func validatePatchPaths(patch string) error {

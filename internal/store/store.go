@@ -96,6 +96,41 @@ func (s *Store) CreateSession(ctx context.Context, projectRoot, title, model, ba
 	return res.LastInsertId()
 }
 
+type OutputArtifact struct {
+	ID          int64
+	SessionID   int64
+	ToolCallID  int64
+	ToolName    string
+	Summary     string
+	Content     string
+	ContentType string
+	Size        int64
+	CreatedAt   time.Time
+}
+
+const ArtifactThreshold = 4000
+
+func (s *Store) SaveArtifact(ctx context.Context, sessionID, toolCallID int64, toolName, summary, content, contentType string) (int64, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := s.db.ExecContext(ctx, `insert into output_artifacts(session_id,tool_call_id,tool_name,summary,content,content_type,size,created_at) values(?,?,?,?,?,?,?,?)`,
+		sessionID, toolCallID, toolName, summary, content, contentType, len(content), now)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) GetArtifact(ctx context.Context, id int64) (*OutputArtifact, error) {
+	row := s.db.QueryRowContext(ctx, `select id,session_id,tool_call_id,tool_name,summary,content,content_type,size,created_at from output_artifacts where id=?`, id)
+	var a OutputArtifact
+	var created string
+	if err := row.Scan(&a.ID, &a.SessionID, &a.ToolCallID, &a.ToolName, &a.Summary, &a.Content, &a.ContentType, &a.Size, &created); err != nil {
+		return nil, err
+	}
+	a.CreatedAt, _ = time.Parse(time.RFC3339, created)
+	return &a, nil
+}
+
 func (s *Store) AddMessage(ctx context.Context, sessionID int64, role, content string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := s.db.ExecContext(ctx, `insert into messages(session_id,role,content,created_at) values(?,?,?,?)`,
