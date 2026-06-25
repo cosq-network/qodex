@@ -1,21 +1,23 @@
 # Locha
 
-Locha is a local-first coding agent CLI written in Go. It uses a terminal UI, an OpenAI-compatible local model endpoint, and a single locally hosted Qwen Coder model by default.
+Locha is a local-first coding agent CLI written in Go. It uses a terminal UI with streaming token rendering, an OpenAI-compatible local model endpoint, and a single locally hosted Qwen Coder model by default.
 
-The intended runtime is `llama.cpp`, not Ollama. Other OpenAI-compatible backends such as vLLM and SGLang can be supported as advanced runtime options without changing the agent core.
+The intended runtime is `llama.cpp`, not Ollama. Other OpenAI-compatible backends such as vLLM and SGLang can be supported as advanced runtime options without changing the agent core. Backend capability detection is performed at startup to enable streaming when supported.
 
 ## Current MVP
 
 The repository currently includes a usable MVP with:
 
-- Cobra CLI commands: `init`, `config`, `chat`, `run`, `doctor`, `skills list`, `skills show`, and `sessions list`.
-- Bubble Tea terminal chat UI.
-- OpenAI-compatible `/v1/chat/completions` client for `llama.cpp`.
+- Cobra CLI commands: `init`, `config`, `chat`, `run`, `doctor`, `skills list`, `skills show`, `sessions list`, `sessions resume`, and `sessions export`.
+- Bubble Tea terminal chat UI with streaming token rendering and inline diff preview.
+- OpenAI-compatible `/v1/chat/completions` client for `llama.cpp` with SSE streaming.
 - Prompt-based JSON tool calling for broad backend compatibility.
 - Built-in tools: `list_files`, `read_file`, `search_text`, `write_file`, `write_patch`, `run_command`, `git_status`, and `git_diff`.
 - Project and user skills loaded from `SKILL.md` files.
-- SQLite session/tool event storage and TUI session resume.
-- Approval gates for write, shell, and network tools, with inline TUI approvals and `--yes` for explicit auto-approval.
+- SQLite session/tool event storage and TUI session resume with tool history reconstruction.
+- Approval gates for write, shell, and network tools, with inline TUI approvals, diff preview, persistent error status bar, and `--yes` for explicit auto-approval.
+- Context compaction for long sessions on small local models.
+- Backend capability detection for streaming and model availability.
 
 ## Goals
 
@@ -111,6 +113,7 @@ The CLI should treat this as an OpenAI-compatible base URL and should not requir
 ./locha chat
 ./locha sessions list
 ./locha sessions resume <id>
+./locha sessions export <id>
 ```
 
 For prompts that may write files or run commands:
@@ -119,4 +122,4 @@ For prompts that may write files or run commands:
 ./locha --yes run "Run the tests and fix the failing issue"
 ```
 
-Without `--yes`, the one-shot CLI asks before write, shell, and network tools. In chat mode, Locha shows approval requests inline; press `y` to approve or `n` to deny.
+Without `--yes`, the one-shot CLI asks before write, shell, and network tools. In chat mode, Locha shows approval requests inline with a diff preview; press `y` to approve or `n` to deny. Model responses are rendered token-by-token via SSE streaming when the backend supports it.

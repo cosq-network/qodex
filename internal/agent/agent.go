@@ -13,6 +13,12 @@ import (
 	"github.com/benoybose/locha/internal/tools"
 )
 
+type PlanState struct {
+	CurrentTask    string
+	FilesInspected []string
+	ActionsTaken   []string
+}
+
 type Options struct {
 	Config    config.Config
 	Client    *model.Client
@@ -26,21 +32,25 @@ type Options struct {
 }
 
 type Agent struct {
-	cfg       config.Config
-	client    *model.Client
-	tools     *tools.Registry
-	store     *store.Store
-	skills    []skills.Skill
-	approver  Approver
-	observer  Observer
-	maxSteps  int
-	sessionID int64
-	messages  []model.Message
+	cfg            config.Config
+	client         *model.Client
+	tools          *tools.Registry
+	store          *store.Store
+	skills         []skills.Skill
+	approver       Approver
+	observer       Observer
+	maxSteps       int
+	sessionID      int64
+	messages       []model.Message
+	streamCallback func(string)
+	streaming      bool
+	planState      PlanState
 }
 
 type ApprovalRequest struct {
 	Kind    string
 	Summary string
+	Diff    string
 }
 
 type Approver interface {
@@ -59,6 +69,7 @@ type Event struct {
 	Effect  string
 	Summary string
 	Error   string
+	Detail  string
 }
 
 type Observer interface {
@@ -97,7 +108,16 @@ func (a *Agent) SetObserver(observer Observer) {
 	a.observer = observer
 }
 
+func (a *Agent) SetStreamCallback(cb func(string)) {
+	a.streamCallback = cb
+}
+
+func (a *Agent) SetStreaming(enabled bool) {
+	a.streaming = enabled
+}
+
 func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
+	a.planState.CurrentTask = prompt
 	if a.sessionID == 0 {
 		title := prompt
 		if len(title) > 80 {
@@ -119,13 +139,28 @@ func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
 			for _, msg := range stored {
 				a.messages = append(a.messages, model.Message{Role: msg.Role, Content: msg.Content})
 			}
+			toolCalls, err := a.store.ListToolCalls(ctx, a.sessionID)
+			if err == nil && len(toolCalls) > 0 {
+				var summary strings.Builder
+				summary.WriteString("Tool call state from prior session:\n")
+				for _, tc := range toolCalls {
+					summary.WriteString(fmt.Sprintf("- %s: %s [%s]", tc.Name, tc.Arguments, tc.Status))
+					if tc.Result != nil {
+						if tc.Result.Error != "" {
+							summary.WriteString(fmt.Sprintf(" error=%s", tc.Result.Error))
+						}
+					}
+					summary.WriteString("\n")
+				}
+				a.messages = append(a.messages, model.Message{Role: "system", Content: summary.String()})
+			}
 		}
 	}
 	a.messages = append(a.messages, model.Message{Role: "user", Content: prompt})
 	_ = a.store.AddMessage(ctx, a.sessionID, "user", prompt)
 
 	for step := 0; step < a.maxSteps; step++ {
-		content, err := a.client.Chat(ctx, a.messages, a.cfg.Runtime.Temperature, a.cfg.Runtime.TopP)
+		content, err := a.chat(ctx)
 		if err != nil {
 			return "", err
 		}
@@ -151,6 +186,67 @@ func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
 	return "", fmt.Errorf("agent stopped after %d steps", a.maxSteps)
 }
 
+func (a *Agent) estimateTokens(msg model.Message) int {
+	return len(msg.Content) / 4
+}
+
+func (a *Agent) compactContext() {
+	if a.cfg.Runtime.ContextTokens <= 0 {
+		return
+	}
+	total := 0
+	for _, msg := range a.messages {
+		total += a.estimateTokens(msg)
+	}
+	threshold := int(float64(a.cfg.Runtime.ContextTokens) * 0.7)
+	if total <= threshold {
+		return
+	}
+	keepSystem := 0
+	for i, msg := range a.messages {
+		if msg.Role == "system" {
+			keepSystem = i
+			break
+		}
+	}
+	systemMsgs := a.messages[:keepSystem+1]
+	rest := a.messages[keepSystem+1:]
+	if len(rest) <= 4 {
+		return
+	}
+	keepRecent := 4
+	if len(rest) < keepRecent {
+		keepRecent = len(rest)
+	}
+	recent := rest[len(rest)-keepRecent:]
+	full := make([]model.Message, 0, len(systemMsgs)+keepRecent+1)
+	full = append(full, systemMsgs...)
+	compacted := "Previous conversation context was compacted to fit within the model's context window."
+	full = append(full, model.Message{Role: "system", Content: compacted})
+	full = append(full, recent...)
+	a.messages = full
+}
+
+func (a *Agent) chat(ctx context.Context) (string, error) {
+	a.compactContext()
+	if !a.streaming || a.streamCallback == nil {
+		return a.client.Chat(ctx, a.messages, a.cfg.Runtime.Temperature, a.cfg.Runtime.TopP)
+	}
+	ch, err := a.client.ChatStream(ctx, a.messages, a.cfg.Runtime.Temperature, a.cfg.Runtime.TopP)
+	if err != nil {
+		return "", err
+	}
+	var full strings.Builder
+	for chunk := range ch {
+		if chunk.Err != nil {
+			return full.String(), chunk.Err
+		}
+		full.WriteString(chunk.Content)
+		a.streamCallback(chunk.Content)
+	}
+	return full.String(), nil
+}
+
 func (a *Agent) systemPrompt(userPrompt string) string {
 	selected := skills.Select(a.skills, userPrompt)
 	var b strings.Builder
@@ -160,6 +256,18 @@ func (a *Agent) systemPrompt(userPrompt string) string {
 	b.WriteString(`{"tool_call":{"name":"read_file","arguments":{"path":"README.md"}}}` + "\n")
 	b.WriteString("When you have enough information, respond normally with the final answer.\n")
 	b.WriteString("Prefer narrow reads and searches before edits. Explain risky actions before requesting shell commands.\n\n")
+	b.WriteString("Current task: ")
+	b.WriteString(a.planState.CurrentTask)
+	b.WriteString("\n")
+	if len(a.planState.FilesInspected) > 0 {
+		b.WriteString("Files already inspected:\n")
+		for _, f := range a.planState.FilesInspected {
+			b.WriteString("- ")
+			b.WriteString(f)
+			b.WriteString("\n")
+		}
+	}
+	b.WriteString("\n")
 	b.WriteString(a.tools.Prompt())
 	if rendered := skills.Render(selected, 8000); rendered != "" {
 		b.WriteString("\n")
@@ -219,21 +327,34 @@ func (a *Agent) executeTool(ctx context.Context, call toolCall) (string, error) 
 	}
 	callID, _ := a.store.AddToolCall(ctx, a.sessionID, call.Name, string(call.Arguments), "requested")
 
+	a.planState.ActionsTaken = append(a.planState.ActionsTaken, call.Name+" "+string(call.Arguments))
+	if call.Name == "read_file" {
+		var args struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal(call.Arguments, &args) == nil && args.Path != "" {
+			a.planState.FilesInspected = append(a.planState.FilesInspected, args.Path)
+		}
+	}
+
 	effect := tool.Effect
 	if call.Name == "run_command" && tools.IsNetworkCommand(call.Arguments) {
 		effect = "network"
 	}
+	diff, _ := a.tools.DiffPreview(call.Name, call.Arguments)
 	summary := call.Name + " " + string(call.Arguments)
-	a.emit(Event{Type: "tool_requested", Tool: call.Name, Effect: effect, Summary: summary})
+	a.emit(Event{Type: "tool_requested", Tool: call.Name, Effect: effect, Summary: summary, Detail: diff})
 	if effect == "write" || effect == "shell" || effect == "network" || effect == "destructive" {
-		a.emit(Event{Type: "approval_requested", Tool: call.Name, Effect: effect, Summary: summary})
-		approved := a.approver != nil && a.approver.Approve(ApprovalRequest{Kind: effect, Summary: summary})
+		a.emit(Event{Type: "approval_requested", Tool: call.Name, Effect: effect, Summary: summary, Detail: diff})
+		approved := a.approver != nil && a.approver.Approve(ApprovalRequest{Kind: effect, Summary: summary, Diff: diff})
 		if !approved {
 			a.emit(Event{Type: "approval_denied", Tool: call.Name, Effect: effect, Summary: summary})
 			_ = a.store.AddToolResult(ctx, callID, "", "approval denied")
+			_ = a.store.AddApproval(ctx, a.sessionID, callID, call.Name, effect, summary, false)
 			return `{"ok":false,"summary":"approval denied"}`, nil
 		}
 		a.emit(Event{Type: "approval_approved", Tool: call.Name, Effect: effect, Summary: summary})
+		_ = a.store.AddApproval(ctx, a.sessionID, callID, call.Name, effect, summary, true)
 	}
 
 	res, err := tool.Execute(ctx, call.Arguments)

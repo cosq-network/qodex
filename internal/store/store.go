@@ -24,6 +24,30 @@ type Message struct {
 	CreatedAt time.Time
 }
 
+type ToolCallRecord struct {
+	ID        int64
+	SessionID int64
+	Name      string
+	Arguments string
+	Status    string
+	CreatedAt time.Time
+	Result    *ToolResultRecord
+}
+
+type ToolResultRecord struct {
+	ID        int64
+	ToolCallID int64
+	Output    string
+	Error     string
+	CreatedAt time.Time
+}
+
+type ExportData struct {
+	Session   Session
+	Messages  []Message
+	ToolCalls []ToolCallRecord
+}
+
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -41,39 +65,14 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-func (s *Store) migrate(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `
-create table if not exists sessions (
-  id integer primary key autoincrement,
-  project_root text not null,
-  title text not null,
-  model text not null,
-  backend text not null,
-  created_at text not null,
-  updated_at text not null
-);
-create table if not exists messages (
-  id integer primary key autoincrement,
-  session_id integer not null,
-  role text not null,
-  content text not null,
-  created_at text not null
-);
-create table if not exists tool_calls (
-  id integer primary key autoincrement,
-  session_id integer not null,
-  name text not null,
-  arguments_json text not null,
-  status text not null,
-  created_at text not null
-);
-create table if not exists tool_results (
-  id integer primary key autoincrement,
-  tool_call_id integer not null,
-  output text not null,
-  error text not null,
-  created_at text not null
-);`)
+func (s *Store) AddApproval(ctx context.Context, sessionID, toolCallID int64, toolName, kind, summary string, approved bool) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	v := 0
+	if approved {
+		v = 1
+	}
+	_, err := s.db.ExecContext(ctx, `insert into approvals(session_id,tool_call_id,tool_name,kind,summary,approved,created_at) values(?,?,?,?,?,?,?)`,
+		sessionID, toolCallID, toolName, kind, summary, v, now)
 	return err
 }
 
@@ -143,6 +142,53 @@ func (s *Store) GetSession(ctx context.Context, id int64) (Session, error) {
 	}
 	t, _ := time.Parse(time.RFC3339, updated)
 	return Session{ID: sessionID, Title: title, UpdatedAt: t}, nil
+}
+
+func (s *Store) ListToolCalls(ctx context.Context, sessionID int64) ([]ToolCallRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `select id,session_id,name,arguments_json,status,created_at from tool_calls where session_id=? order by id asc`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ToolCallRecord
+	for rows.Next() {
+		var r ToolCallRecord
+		var created string
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.Name, &r.Arguments, &r.Status, &created); err != nil {
+			return nil, err
+		}
+		r.CreatedAt, _ = time.Parse(time.RFC3339, created)
+		r.Result = s.getToolResult(ctx, r.ID)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) getToolResult(ctx context.Context, toolCallID int64) *ToolResultRecord {
+	row := s.db.QueryRowContext(ctx, `select id,tool_call_id,output,error,created_at from tool_results where tool_call_id=? order by id desc limit 1`, toolCallID)
+	var r ToolResultRecord
+	var created string
+	if err := row.Scan(&r.ID, &r.ToolCallID, &r.Output, &r.Error, &created); err != nil {
+		return nil
+	}
+	r.CreatedAt, _ = time.Parse(time.RFC3339, created)
+	return &r
+}
+
+func (s *Store) ExportSession(ctx context.Context, sessionID int64) (ExportData, error) {
+	session, err := s.GetSession(ctx, sessionID)
+	if err != nil {
+		return ExportData{}, err
+	}
+	messages, err := s.ListMessages(ctx, sessionID)
+	if err != nil {
+		return ExportData{}, err
+	}
+	toolCalls, err := s.ListToolCalls(ctx, sessionID)
+	if err != nil {
+		return ExportData{}, err
+	}
+	return ExportData{Session: session, Messages: messages, ToolCalls: toolCalls}, nil
 }
 
 func (s *Store) ListMessages(ctx context.Context, sessionID int64) ([]Message, error) {

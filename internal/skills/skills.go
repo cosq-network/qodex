@@ -54,16 +54,94 @@ func Discover(projectRoot string) ([]Skill, error) {
 
 func Select(all []Skill, prompt string) []Skill {
 	prompt = strings.ToLower(prompt)
-	var selected []Skill
+
+	type scored struct {
+		skill Skill
+		score int
+	}
+
+	var project *Skill
+	var scoredSkills []scored
+
 	for _, skill := range all {
-		if strings.Contains(prompt, strings.ToLower(skill.Name)) || strings.Contains(prompt, "/skill "+strings.ToLower(skill.Name)) {
-			selected = append(selected, skill)
+		name := strings.ToLower(skill.Name)
+		if name == "project" {
+			s := skill
+			project = &s
+			continue
+		}
+		score := matchScore(skill, prompt)
+		if score > 0 || strings.Contains(prompt, "/skill "+name) {
+			if score < 1 {
+				score = 1
+			}
+			scoredSkills = append(scoredSkills, scored{skill, score})
 		}
 	}
-	if len(selected) > 3 {
-		return selected[:3]
+
+	sort.Slice(scoredSkills, func(i, j int) bool {
+		return scoredSkills[i].score > scoredSkills[j].score
+	})
+
+	if len(scoredSkills) > 2 {
+		scoredSkills = scoredSkills[:2]
 	}
-	return selected
+
+	result := make([]Skill, 0, 3)
+	if project != nil {
+		result = append(result, *project)
+	}
+	for _, s := range scoredSkills {
+		result = append(result, s.skill)
+		if len(result) >= 3 {
+			break
+		}
+	}
+
+	return result
+}
+
+func matchScore(skill Skill, prompt string) int {
+	score := 0
+
+	name := strings.ToLower(skill.Name)
+	if strings.Contains(prompt, name) {
+		score += 10
+	}
+
+	content := strings.ToLower(skill.Content)
+	lines := strings.Split(content, "\n")
+
+	seen := map[string]bool{}
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		words := strings.Fields(trimmed)
+		isHeading := strings.HasPrefix(trimmed, "# ") || strings.HasPrefix(trimmed, "## ")
+		for _, w := range words {
+			if isHeading {
+				w = strings.Trim(w, ".,:;!?()[]")
+			} else {
+				w = strings.Trim(w, ".,:;!?()[]{}'\"`")
+			}
+			w = strings.ToLower(w)
+			if len(w) < 4 || seen[w] {
+				continue
+			}
+			seen[w] = true
+			if strings.Contains(prompt, w) {
+				if isHeading {
+					score += 3
+				} else {
+					score += 1
+				}
+			}
+		}
+	}
+
+	return score
 }
 
 func Render(skills []Skill, budget int) string {

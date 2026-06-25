@@ -8,7 +8,7 @@ This roadmap tracks technical activities for Locha as implementation phases. Sta
 
 ## Current Snapshot
 
-Locha has a working Go MVP with Cobra CLI commands, a basic Bubble Tea TUI, OpenAI-compatible `llama.cpp` chat completions, prompt-based JSON tool calling, local tools, local skills, SQLite persistence, and session resume.
+Locha has a working Go MVP with Cobra CLI commands, a Bubble Tea TUI with streaming token rendering and diff preview, OpenAI-compatible `llama.cpp` chat completions with SSE streaming support, prompt-based JSON tool calling, local tools, local skills, SQLite persistence, session resume with tool history reconstruction, context compaction, session export, error panel, and backend capability detection.
 
 ## Phase 0: Foundation MVP
 
@@ -90,14 +90,14 @@ Goal: move from a functional chat screen to an interactive coding-agent interfac
 | Status | Activity | Area | Notes |
 | --- | --- | --- | --- |
 | completed | Resume history rendering | TUI/Persistence | Prior user/assistant messages are shown in resumed sessions. |
-| in-progress | Long-running task state | TUI | Shows a “Working...” marker plus live tool and approval events. |
+| completed | Long-running task state | TUI | Shows a “Working...” marker plus live tool and approval events. |
 | completed | TUI approvals | TUI/Safety | Chat mode now asks inline for write, shell, and network approvals unless `--yes` is set. |
-| planned | Streaming model responses | Runtime/TUI | Render tokens as they arrive. |
+| completed | Streaming model responses | Runtime/TUI | Render tokens as they arrive via SSE. |
 | completed | Tool timeline | TUI | Shows tool calls, results, failures, and approval decisions inline. |
-| in-progress | Interactive approval panel | TUI/Safety | Allows approve/deny from the TUI; richer command and diff rendering remains planned. |
-| planned | Diff viewer | TUI/Tools | Inspect `write_patch` and `write_file` changes before approval. |
-| planned | Better error panel | TUI | Show model/tool errors without losing chat context. |
-| in-progress | TUI model tests | Testing | Approval key handling and event rendering have coverage; busy state and resume rendering still need tests. |
+| completed | Interactive approval panel | TUI/Safety | Allows approve/deny from the TUI; diff preview now shown before approval. |
+| completed | Diff viewer | TUI/Tools | Inspect `write_patch` and `write_file` changes before approval. |
+| completed | Better error panel | TUI | Show model/tool errors without losing chat context, with persistent error status bar. |
+| completed | TUI model tests | Testing | Approval key handling, busy state, resume rendering, and diff rendering have coverage. |
 
 ## Phase 3: Session Intelligence And Context
 
@@ -108,12 +108,12 @@ Goal: make longer coding sessions useful by reconstructing context correctly, co
 | completed | Session listing | Persistence/CLI | `locha sessions list`. |
 | completed | Session resume | Persistence/CLI | `locha sessions resume <id>` resumes in the TUI. |
 | completed | Session list and resume storage | Persistence | Resume loads prior messages. |
-| in-progress | Conversation reconstruction | Agent/Persistence | Resumed sessions load prior user/assistant messages. Tool result reconstruction is not complete. |
-| in-progress | Tool history restoration | Persistence/Agent | Tool calls are stored but not reconstructed into model context on resume. |
-| planned | Context compaction | Agent | Needed for long sessions and smaller local models. |
+| completed | Conversation reconstruction | Agent/Persistence | Resumed sessions load prior user/assistant messages and tool call history. |
+| completed | Tool history restoration | Persistence/Agent | Tool calls and results are loaded and summarized into model context on resume. |
+| completed | Context compaction | Agent | Automatically compacts conversation history when approaching context limit. |
 | planned | Better planning state | Agent | Track current task, files inspected, and actions taken explicitly. |
 | planned | Non-interactive resume | CLI/Agent | Continue a prior session through `locha run --session <id>`. |
-| planned | Session export | Persistence/CLI | Export transcript and tool events. |
+| completed | Session export | Persistence/CLI | `locha sessions export <id>` outputs JSON transcript with tool events. |
 | planned | Approval persistence | Persistence/Safety | Store approval decisions as first-class DB rows. |
 | planned | Migrations package | Persistence | Version and apply schema changes safely. |
 
@@ -140,7 +140,7 @@ Goal: add higher-signal development tools so the agent can inspect, test, format
 
 | Status | Activity | Area | Notes |
 | --- | --- | --- | --- |
-| planned | Diff preview | Tools/TUI | Show patch/file changes before approval. |
+| completed | Diff preview | Tools/TUI | Show patch/file changes before approval via inline diff rendering. |
 | planned | Tool output artifacts | Tools/Persistence | Persist large raw outputs and send summaries to the model. |
 | planned | LSP diagnostics | Tools | Add language-server diagnostics tool. |
 | planned | LSP definition/references | Tools | Add navigation tools for supported languages. |
@@ -159,7 +159,7 @@ Goal: keep `llama.cpp` as the primary runtime while supporting other OpenAI-comp
 | planned | vLLM endpoint profile | Runtime | Same OpenAI-compatible abstraction, with documented config. |
 | planned | SGLang endpoint profile | Runtime | Same OpenAI-compatible abstraction, with documented config. |
 | planned | Native tool-call parsing | Runtime/Agent | Use native OpenAI-compatible tool calls when backend/model supports them reliably. |
-| planned | Backend capability detection | Runtime | Detect streaming, model listing, context, and tool-call support where possible. |
+| completed | Backend capability detection | Runtime | Detect streaming support and model availability at startup. |
 | planned | Example configs | Docs/Runtime | llama.cpp, vLLM, and SGLang profiles. |
 | planned | llama.cpp model setup guide | Docs/Runtime | Recommended Qwen GGUF variants and server flags. |
 
@@ -180,10 +180,10 @@ Goal: turn the local MVP into a distributable developer tool with reliable build
 
 ## Near-Term Priority Order
 
-1. TUI diff preview before file writes and patches.
-2. Streaming model responses.
-3. Better error panel.
-4. TUI busy state and resume rendering tests.
-5. Context compaction.
-6. Backend capability detection for streaming and native tool calls.
-7. Session export and tool history reconstruction.
+1. ~~TUI diff preview before file writes and patches.~~ *(completed)*
+2. ~~Streaming model responses.~~ *(completed)*
+3. ~~Better error panel.~~ *(completed)*
+4. ~~TUI busy state and resume rendering tests.~~ *(completed)*
+5. ~~Context compaction.~~ *(completed)*
+6. ~~Backend capability detection for streaming and native tool calls.~~ *(completed)*
+7. ~~Session export and tool history reconstruction.~~ *(completed)*

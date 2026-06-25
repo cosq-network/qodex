@@ -1,6 +1,7 @@
 package model
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -49,6 +50,89 @@ func (c *Client) Check(ctx context.Context) error {
 	return nil
 }
 
+func (c *Client) ChatStream(ctx context.Context, messages []Message, temperature, topP float64) (<-chan StreamResult, error) {
+	reqBody := chatRequest{
+		Model:       c.Model,
+		Messages:    messages,
+		Temperature: temperature,
+		TopP:        topP,
+		Stream:      true,
+	}
+	raw, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat/completions", bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		resp.Body.Close()
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+	}
+
+	ch := make(chan StreamResult, 10)
+	go func() {
+		defer resp.Body.Close()
+		defer close(ch)
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			data := strings.TrimPrefix(line, "data: ")
+			if data == "[DONE]" {
+				return
+			}
+			var chunk streamChunk
+			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+				continue
+			}
+			if len(chunk.Choices) > 0 {
+				select {
+				case ch <- StreamResult{Content: chunk.Choices[0].Delta.Content}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			select {
+			case ch <- StreamResult{Err: err}:
+			case <-ctx.Done():
+			}
+		}
+	}()
+	return ch, nil
+}
+
+func (c *Client) DetectCapabilities(ctx context.Context) Capabilities {
+	caps := Capabilities{}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/models", nil)
+	if err != nil {
+		return caps
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return caps
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return caps
+	}
+	caps.Streaming = true
+	return caps
+}
+
 func (c *Client) Chat(ctx context.Context, messages []Message, temperature, topP float64) (string, error) {
 	reqBody := chatRequest{
 		Model:       c.Model,
@@ -90,6 +174,15 @@ func (c *Client) Chat(ctx context.Context, messages []Message, temperature, topP
 	return out.Choices[0].Message.Content, nil
 }
 
+type StreamResult struct {
+	Content string
+	Err     error
+}
+
+type Capabilities struct {
+	Streaming bool
+}
+
 type chatRequest struct {
 	Model       string    `json:"model"`
 	Messages    []Message `json:"messages"`
@@ -101,5 +194,13 @@ type chatRequest struct {
 type chatResponse struct {
 	Choices []struct {
 		Message Message `json:"message"`
+	} `json:"choices"`
+}
+
+type streamChunk struct {
+	Choices []struct {
+		Delta struct {
+			Content string `json:"content"`
+		} `json:"delta"`
 	} `json:"choices"`
 }

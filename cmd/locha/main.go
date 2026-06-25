@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -146,12 +147,13 @@ func initCmd() *cobra.Command {
 }
 
 func runCmd(cfgPath *string, yes *bool) *cobra.Command {
-	return &cobra.Command{
+	var sessionID int64
+	cmd := &cobra.Command{
 		Use:   "run PROMPT",
 		Short: "Run a one-shot agent prompt",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			rt, err := buildRuntime(*cfgPath, *yes, false, 0)
+			rt, err := buildRuntime(*cfgPath, *yes, false, sessionID)
 			if err != nil {
 				return err
 			}
@@ -168,6 +170,8 @@ func runCmd(cfgPath *string, yes *bool) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().Int64Var(&sessionID, "session", 0, "resume an existing session by ID")
+	return cmd
 }
 
 func writeStarterFile(path, content string, force bool) error {
@@ -373,6 +377,36 @@ func sessionsCmd(cfgPath *string, yes *bool) *cobra.Command {
 			return err
 		},
 	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "export ID",
+		Short: "Export session data as JSON",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil {
+				return fmt.Errorf("invalid session id: %w", err)
+			}
+			cfg, err := config.Load(*cfgPath)
+			if err != nil {
+				return err
+			}
+			db, err := store.Open(cfg.Store.Path)
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+			data, err := db.ExportSession(cmd.Context(), id)
+			if err != nil {
+				return err
+			}
+			raw, err := json.MarshalIndent(data, "", "  ")
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(raw))
+			return nil
+		},
+	})
 	return cmd
 }
 
@@ -419,7 +453,7 @@ func buildRuntime(cfgPath string, yes bool, tuiMode bool, sessionID int64) (*run
 
 	client := model.NewClient(cfg.Model.BaseURL, cfg.Model.Model)
 	registry := tools.NewRegistry(cfg.ProjectRoot)
-	agent := agent.New(agent.Options{
+	agt := agent.New(agent.Options{
 		Config:    cfg,
 		Client:    client,
 		Tools:     registry,
@@ -429,5 +463,13 @@ func buildRuntime(cfgPath string, yes bool, tuiMode bool, sessionID int64) (*run
 		MaxSteps:  cfg.Agent.MaxSteps,
 		SessionID: sessionID,
 	})
-	return &runtime{Agent: agent, Store: db, AutoApprove: yes || cfg.Approval.AutoApprove}, nil
+	if tuiMode {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		caps := client.DetectCapabilities(ctx)
+		cancel()
+		if caps.Streaming {
+			agt.SetStreaming(true)
+		}
+	}
+	return &runtime{Agent: agt, Store: db, AutoApprove: yes || cfg.Approval.AutoApprove}, nil
 }

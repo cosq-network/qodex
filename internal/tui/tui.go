@@ -22,12 +22,15 @@ type Model struct {
 	history      []string
 	busy         bool
 	err          error
+	lastErr      string
 	width        int
 	height       int
 	workingIndex int
 	events       chan agent.Event
 	approvals    chan approvalPrompt
 	pending      *approvalPrompt
+	streamCh     chan string
+	streamBuffer strings.Builder
 }
 
 type responseMsg struct {
@@ -35,6 +38,8 @@ type responseMsg struct {
 	text   string
 	err    error
 }
+
+type streamMsg string
 
 type eventMsg agent.Event
 
@@ -51,6 +56,7 @@ var (
 	approvalStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
 	errorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	helpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	diffStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("82"))
 )
 
 func New(agent *agent.Agent) Model {
@@ -91,6 +97,7 @@ func newModel(a *agent.Agent, messages []store.Message, autoApprove bool) Model 
 	}
 	events := make(chan agent.Event, 100)
 	approvals := make(chan approvalPrompt)
+	streamCh := make(chan string, 50)
 	a.SetObserver(agent.ObserverFunc(func(event agent.Event) {
 		select {
 		case events <- event:
@@ -98,6 +105,12 @@ func newModel(a *agent.Agent, messages []store.Message, autoApprove bool) Model 
 		}
 	}))
 	a.SetApprover(tuiApprover{autoApprove: autoApprove, prompts: approvals})
+	a.SetStreamCallback(func(content string) {
+		select {
+		case streamCh <- content:
+		default:
+		}
+	})
 	return Model{
 		agent:        a,
 		input:        input,
@@ -106,11 +119,12 @@ func newModel(a *agent.Agent, messages []store.Message, autoApprove bool) Model 
 		workingIndex: -1,
 		events:       events,
 		approvals:    approvals,
+		streamCh:     streamCh,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(textinput.Blink, waitForEvent(m.events), waitForApproval(m.approvals))
+	return tea.Batch(textinput.Blink, waitForEvent(m.events), waitForApproval(m.approvals), waitForStream(m.streamCh))
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -156,30 +170,53 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.input.SetValue("")
 			m.busy = true
+			m.lastErr = ""
+			m.streamBuffer.Reset()
 			m.history = append(m.history, "", userStyle.Render("You:"), prompt, "", aiStyle.Render("Locha:"), "Working...")
 			m.workingIndex = len(m.history) - 1
 			m.refresh()
 			return m, runPrompt(m.agent, prompt)
 		}
+	case streamMsg:
+		m.streamBuffer.WriteString(string(msg))
+		if m.workingIndex >= 0 && m.workingIndex < len(m.history) {
+			m.history[m.workingIndex] = m.streamBuffer.String()
+		}
+		m.refresh()
+		return m, waitForStream(m.streamCh)
 	case eventMsg:
-		m.history = append(m.history, renderEvent(agent.Event(msg)))
+		evt := agent.Event(msg)
+		if evt.Type == "tool_failed" {
+			m.lastErr = evt.Error
+			if m.lastErr == "" {
+				m.lastErr = evt.Summary
+			}
+		}
+		m.history = append(m.history, renderEvent(evt))
 		m.refresh()
 		return m, waitForEvent(m.events)
 	case approvalPrompt:
 		m.pending = &msg
-		m.history = append(m.history, "", approvalStyle.Render("Approval required:"), renderApproval(msg.req), helpStyle.Render("Press y to approve, n to deny."))
+		m.history = append(m.history, "", approvalStyle.Render("Approval required:"), renderApproval(msg.req))
 		m.refresh()
 		return m, waitForApproval(m.approvals)
 	case responseMsg:
 		m.busy = false
-		if m.workingIndex >= 0 && m.workingIndex < len(m.history) && m.history[m.workingIndex] == "Working..." {
+		finalText := msg.text
+		if m.streamBuffer.Len() > 0 {
+			finalText = m.streamBuffer.String()
+			m.streamBuffer.Reset()
+		}
+		if m.workingIndex >= 0 && m.workingIndex < len(m.history) {
 			m.history = append(m.history[:m.workingIndex], m.history[m.workingIndex+1:]...)
 		}
 		m.workingIndex = -1
 		if msg.err != nil {
-			m.history = append(m.history, errorStyle.Render(msg.err.Error()))
-		} else {
-			m.history = append(m.history, msg.text)
+			m.lastErr = msg.err.Error()
+			m.history = append(m.history, errorStyle.Render("Error: "+msg.err.Error()))
+		} else if finalText != "" {
+			m.lastErr = ""
+			m.history = append(m.history, finalText)
 		}
 		m.refresh()
 		return m, nil
@@ -199,6 +236,9 @@ func (m Model) View() string {
 		status = approvalStyle.Render("Approval pending: y approve | n deny | Ctrl+C quit")
 	} else if m.busy {
 		status = helpStyle.Render("Running agent...")
+	}
+	if m.lastErr != "" && !m.busy && m.pending == nil {
+		status = errorStyle.Render("Last error: "+compact(m.lastErr, 80)) + "\n" + status
 	}
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -248,12 +288,26 @@ func waitForApproval(prompts <-chan approvalPrompt) tea.Cmd {
 	}
 }
 
+func waitForStream(ch <-chan string) tea.Cmd {
+	return func() tea.Msg {
+		return streamMsg(<-ch)
+	}
+}
+
 func renderEvent(event agent.Event) string {
 	switch event.Type {
 	case "tool_requested":
-		return toolStyle.Render(fmt.Sprintf("Tool requested [%s]: %s", event.Effect, compact(event.Summary, 500)))
+		text := toolStyle.Render(fmt.Sprintf("Tool requested [%s]: %s", event.Effect, compact(event.Summary, 500)))
+		if event.Detail != "" {
+			text += "\n" + diffStyle.Render(compact(event.Detail, 1000))
+		}
+		return text
 	case "approval_requested":
-		return approvalStyle.Render(fmt.Sprintf("Approval requested [%s]", event.Effect))
+		text := approvalStyle.Render(fmt.Sprintf("Approval requested [%s]", event.Effect))
+		if event.Detail != "" {
+			text += "\n" + diffStyle.Render(compact(event.Detail, 1000))
+		}
+		return text
 	case "approval_approved":
 		return approvalStyle.Render(fmt.Sprintf("Approval granted [%s]", event.Effect))
 	case "approval_denied":
@@ -271,7 +325,12 @@ func renderEvent(event agent.Event) string {
 }
 
 func renderApproval(req agent.ApprovalRequest) string {
-	return fmt.Sprintf("%s\n%s", approvalStyle.Render(req.Kind), compact(req.Summary, 4000))
+	text := fmt.Sprintf("%s\n%s", approvalStyle.Render(req.Kind), compact(req.Summary, 4000))
+	if req.Diff != "" {
+		text += "\n" + diffStyle.Render(compact(req.Diff, 2000))
+	}
+	text += "\n" + helpStyle.Render("Press y to approve, n to deny.")
+	return text
 }
 
 func compact(s string, limit int) string {

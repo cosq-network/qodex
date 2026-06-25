@@ -55,6 +55,80 @@ func (r *Registry) Get(name string) (Tool, bool) {
 	return t, ok
 }
 
+func (r *Registry) DiffPreview(name string, raw json.RawMessage) (string, error) {
+	switch name {
+	case "write_file":
+		var args struct {
+			Path    string `json:"path"`
+			Content string `json:"content"`
+		}
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return "", err
+		}
+		path, err := r.safePath(args.Path)
+		if err != nil {
+			return "", err
+		}
+		existing, err := os.ReadFile(path)
+		if err != nil {
+			existing = []byte{}
+		}
+		return generateDiff(args.Path, string(existing), args.Content), nil
+	case "write_patch":
+		var args struct {
+			Patch string `json:"patch"`
+		}
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return "", err
+		}
+		return args.Patch, nil
+	default:
+		return "", nil
+	}
+}
+
+func generateDiff(filename, old, new string) string {
+	oldLines := strings.Split(old, "\n")
+	newLines := strings.Split(new, "\n")
+	if len(oldLines) > 0 && oldLines[len(oldLines)-1] == "" {
+		oldLines = oldLines[:len(oldLines)-1]
+	}
+	if len(newLines) > 0 && newLines[len(newLines)-1] == "" {
+		newLines = newLines[:len(newLines)-1]
+	}
+	var b strings.Builder
+	b.WriteString("--- a/" + filename + "\n")
+	b.WriteString("+++ b/" + filename + "\n")
+	if old == "" {
+		b.WriteString("@@ -0,0 +1," + fmt.Sprint(len(newLines)) + " @@\n")
+		for _, line := range newLines {
+			b.WriteString("+" + line + "\n")
+		}
+		return b.String()
+	}
+	// Simple line-by-line diff
+	maxLen := len(oldLines)
+	if len(newLines) > maxLen {
+		maxLen = len(newLines)
+	}
+	b.WriteString("@@ -1," + fmt.Sprint(len(oldLines)) + " +1," + fmt.Sprint(len(newLines)) + " @@\n")
+	for i := 0; i < maxLen; i++ {
+		if i < len(oldLines) && i < len(newLines) {
+			if oldLines[i] != newLines[i] {
+				b.WriteString("-" + oldLines[i] + "\n")
+				b.WriteString("+" + newLines[i] + "\n")
+			} else {
+				b.WriteString(" " + oldLines[i] + "\n")
+			}
+		} else if i < len(oldLines) {
+			b.WriteString("-" + oldLines[i] + "\n")
+		} else {
+			b.WriteString("+" + newLines[i] + "\n")
+		}
+	}
+	return b.String()
+}
+
 func (r *Registry) Prompt() string {
 	names := make([]string, 0, len(r.tools))
 	for name := range r.tools {
