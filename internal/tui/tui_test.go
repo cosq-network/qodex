@@ -74,7 +74,7 @@ func TestRenderEventShowsToolActivity(t *testing.T) {
 	}
 }
 
-func TestBusyStateShowsWorking(t *testing.T) {
+func TestBusyStateShowsSpinner(t *testing.T) {
 	model := New(agent.New(agent.Options{}))
 	model.input.SetValue("test prompt")
 	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -82,15 +82,9 @@ func TestBusyStateShowsWorking(t *testing.T) {
 	if !model.busy {
 		t.Fatal("expected busy state after enter")
 	}
-	found := false
-	for _, entry := range model.history {
-		if strings.Contains(entry, "Working...") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatal("expected Working... in history when busy")
+	view := model.View()
+	if !strings.Contains(view, "Running agent") {
+		t.Fatalf("expected Running agent in view: %q", view)
 	}
 	if cmd == nil {
 		t.Fatal("expected non-nil command to run prompt")
@@ -167,5 +161,114 @@ func TestViewShowsErrorStatus(t *testing.T) {
 	view := model.View()
 	if !strings.Contains(view, "connection refused") {
 		t.Fatalf("expected error in view: %q", view)
+	}
+}
+
+func TestExtractAutoQuery(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"no at sign", ""},
+		{"@", ""},
+		{"@ ", ""},
+		{"@README.md", "README.md"},
+		{"prefix @README.md suffix", "README.md"},
+		{"@dir/file.go more", "dir/file.go"},
+		{"@a b", "a"},
+	}
+	for _, tc := range tests {
+		got := extractAutoQuery(tc.input)
+		if got != tc.want {
+			t.Errorf("extractAutoQuery(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestFuzzyFind(t *testing.T) {
+	files := []string{"README.md", "internal/tui/tui.go", "internal/agent/agent.go", "cmd/locha/main.go"}
+	tests := []struct {
+		query string
+		want  int
+	}{
+		{"readme", 1},
+		{"tui", 1},
+		{"agent", 1},
+		{"nonexistent", 0},
+		{"go", 3},
+		{"", 0},
+	}
+	for _, tc := range tests {
+		matches := fuzzyFind(files, tc.query)
+		if len(matches) != tc.want {
+			t.Errorf("fuzzyFind(%q) = %d matches, want %d: %v", tc.query, len(matches), tc.want, matches)
+		}
+	}
+}
+
+func TestAutocompleteSelect(t *testing.T) {
+	model := New(agent.New(agent.Options{}))
+	model.projectFiles = []string{"README.md", "internal/tui/tui.go", "internal/agent/agent.go"}
+	model.input.SetValue("read @README")
+	model.updateAutocomplete()
+	if !model.autoShow {
+		t.Fatal("expected autocomplete to show")
+	}
+	if len(model.matches) == 0 {
+		t.Fatal("expected autocomplete matches")
+	}
+	model.matchIdx = 0
+	model.selectAutocomplete()
+	val := model.input.Value()
+	if !strings.HasPrefix(val, "read @") {
+		t.Fatalf("expected value to contain @ followed by path, got %q", val)
+	}
+	if model.autoShow {
+		t.Fatal("expected autocomplete cleared after selection")
+	}
+}
+
+func TestAutocompleteDismissWithEscape(t *testing.T) {
+	model := New(agent.New(agent.Options{}))
+	model.projectFiles = []string{"README.md", "internal/tui/tui.go"}
+	model.input.SetValue("@README")
+	model.updateAutocomplete()
+	if !model.autoShow {
+		t.Fatal("expected autocomplete to show")
+	}
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	model = updated.(Model)
+	if model.autoShow {
+		t.Fatal("expected autocomplete dismissed on escape")
+	}
+}
+
+func TestAutocompletePartialMatch(t *testing.T) {
+	model := New(agent.New(agent.Options{}))
+	model.projectFiles = []string{"internal/tui/tui.go", "internal/tui/tui_test.go", "internal/agent/agent.go"}
+	model.input.SetValue("read @tui")
+	model.updateAutocomplete()
+	if !model.autoShow {
+		t.Fatal("expected autocomplete to show for partial match")
+	}
+	if len(model.matches) != 2 {
+		t.Fatalf("expected 2 matches for 'tui', got %d", len(model.matches))
+	}
+}
+
+func TestSpinnerShownWhenBusy(t *testing.T) {
+	model := New(agent.New(agent.Options{}))
+	model.busy = true
+	view := model.View()
+	if !strings.Contains(view, "Running agent") {
+		t.Fatalf("expected Running agent in busy view: %q", view)
+	}
+}
+
+func TestContextCompactedEvent(t *testing.T) {
+	evt := agent.Event{Type: "context_compacted", Summary: "Context compacted."}
+	rendered := renderEvent(evt)
+	if !strings.Contains(rendered, "compacted") {
+		t.Fatalf("expected compacted in render: %q", rendered)
 	}
 }

@@ -100,6 +100,10 @@ func New(opts Options) *Agent {
 	}
 }
 
+func (a *Agent) ProjectRoot() string {
+	return a.cfg.ProjectRoot
+}
+
 func (a *Agent) SetApprover(approver Approver) {
 	a.approver = approver
 }
@@ -225,6 +229,7 @@ func (a *Agent) compactContext() {
 	full = append(full, model.Message{Role: "system", Content: compacted})
 	full = append(full, recent...)
 	a.messages = full
+	a.emit(Event{Type: "context_compacted", Summary: "Conversation context was compacted to fit within the model's context window."})
 }
 
 func (a *Agent) chat(ctx context.Context) (string, error) {
