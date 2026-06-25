@@ -20,6 +20,7 @@ type Options struct {
 	Store     *store.Store
 	Skills    []skills.Skill
 	Approver  Approver
+	Observer  Observer
 	MaxSteps  int
 	SessionID int64
 }
@@ -31,6 +32,7 @@ type Agent struct {
 	store     *store.Store
 	skills    []skills.Skill
 	approver  Approver
+	observer  Observer
 	maxSteps  int
 	sessionID int64
 	messages  []model.Message
@@ -51,6 +53,24 @@ func (f ApproverFunc) Approve(req ApprovalRequest) bool {
 	return f(req)
 }
 
+type Event struct {
+	Type    string
+	Tool    string
+	Effect  string
+	Summary string
+	Error   string
+}
+
+type Observer interface {
+	OnEvent(Event)
+}
+
+type ObserverFunc func(Event)
+
+func (f ObserverFunc) OnEvent(event Event) {
+	f(event)
+}
+
 func New(opts Options) *Agent {
 	maxSteps := opts.MaxSteps
 	if maxSteps <= 0 {
@@ -63,9 +83,18 @@ func New(opts Options) *Agent {
 		store:     opts.Store,
 		skills:    opts.Skills,
 		approver:  opts.Approver,
+		observer:  opts.Observer,
 		maxSteps:  maxSteps,
 		sessionID: opts.SessionID,
 	}
+}
+
+func (a *Agent) SetApprover(approver Approver) {
+	a.approver = approver
+}
+
+func (a *Agent) SetObserver(observer Observer) {
+	a.observer = observer
 }
 
 func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
@@ -194,11 +223,17 @@ func (a *Agent) executeTool(ctx context.Context, call toolCall) (string, error) 
 	if call.Name == "run_command" && tools.IsNetworkCommand(call.Arguments) {
 		effect = "network"
 	}
+	summary := call.Name + " " + string(call.Arguments)
+	a.emit(Event{Type: "tool_requested", Tool: call.Name, Effect: effect, Summary: summary})
 	if effect == "write" || effect == "shell" || effect == "network" || effect == "destructive" {
-		if a.approver == nil || !a.approver.Approve(ApprovalRequest{Kind: effect, Summary: call.Name + " " + string(call.Arguments)}) {
+		a.emit(Event{Type: "approval_requested", Tool: call.Name, Effect: effect, Summary: summary})
+		approved := a.approver != nil && a.approver.Approve(ApprovalRequest{Kind: effect, Summary: summary})
+		if !approved {
+			a.emit(Event{Type: "approval_denied", Tool: call.Name, Effect: effect, Summary: summary})
 			_ = a.store.AddToolResult(ctx, callID, "", "approval denied")
 			return `{"ok":false,"summary":"approval denied"}`, nil
 		}
+		a.emit(Event{Type: "approval_approved", Tool: call.Name, Effect: effect, Summary: summary})
 	}
 
 	res, err := tool.Execute(ctx, call.Arguments)
@@ -208,8 +243,19 @@ func (a *Agent) executeTool(ctx context.Context, call toolCall) (string, error) 
 		errText = err.Error()
 	}
 	_ = a.store.AddToolResult(ctx, callID, string(raw), errText)
+	if err != nil {
+		a.emit(Event{Type: "tool_failed", Tool: call.Name, Effect: effect, Summary: res.Summary, Error: err.Error()})
+	} else {
+		a.emit(Event{Type: "tool_completed", Tool: call.Name, Effect: effect, Summary: res.Summary})
+	}
 	if err != nil && res.Content == "" {
 		return string(raw), err
 	}
 	return string(raw), nil
+}
+
+func (a *Agent) emit(event Event) {
+	if a.observer != nil {
+		a.observer.OnEvent(event)
+	}
 }

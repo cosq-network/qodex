@@ -15,7 +15,7 @@ The repository currently includes a usable MVP with:
 - Built-in tools: `list_files`, `read_file`, `search_text`, `write_file`, `write_patch`, `run_command`, `git_status`, and `git_diff`.
 - Project and user skills loaded from `SKILL.md` files.
 - SQLite session/tool event storage and TUI session resume.
-- Approval gates for write and shell tools, with `--yes` for explicit auto-approval.
+- Approval gates for write, shell, and network tools, with inline TUI approvals and `--yes` for explicit auto-approval.
 
 ## Goals
 
@@ -119,4 +119,4 @@ For prompts that may write files or run commands:
 ./locha --yes run "Run the tests and fix the failing issue"
 ```
 
-Without `--yes`, the one-shot CLI asks before write and shell tools. In the current MVP, the TUI denies write and shell tools unless started with `--yes`.
+Without `--yes`, the one-shot CLI asks before write, shell, and network tools. In chat mode, Locha shows approval requests inline; press `y` to approve or `n` to deny.

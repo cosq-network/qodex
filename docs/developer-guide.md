@@ -291,7 +291,7 @@ Status: partially implemented with `write_file`, `write_patch`, approval handlin
 - Tool timeline.
 - Approval prompt UI.
 
-Status: basic chat screen implemented. Streaming, tool timeline, and in-TUI approvals remain.
+Status: chat screen, resume rendering, inline tool timeline, and in-TUI approvals are implemented. Streaming and richer diff/error panels remain.
 
 ### Milestone 4: Skills
 

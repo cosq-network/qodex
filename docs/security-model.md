@@ -49,7 +49,7 @@ The `--yes` flag and `approval.auto_approve = true` bypass prompts. These modes 
 - Shell commands can hide behavior behind scripts, aliases, subshells, and tools that perform network access internally.
 - Path validation protects Locha's built-in file tools, not arbitrary commands run through `run_command`.
 - Symlink handling is root-relative but not a full sandbox. A shell command can still follow symlinks according to normal OS rules.
-- The current TUI denies write, shell, and network tools unless started with `--yes`; interactive TUI approval is planned for Phase 2.
+- The TUI approval panel is intentionally minimal. Rich diff rendering before approval is still planned.
 - Locha does not yet persist approval decisions as first-class records.
 
 ## Recommended Usage

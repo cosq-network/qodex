@@ -90,14 +90,14 @@ Goal: move from a functional chat screen to an interactive coding-agent interfac
 | Status | Activity | Area | Notes |
 | --- | --- | --- | --- |
 | completed | Resume history rendering | TUI/Persistence | Prior user/assistant messages are shown in resumed sessions. |
-| in-progress | Long-running task state | TUI | Shows a simple “Working...” marker. |
-| in-progress | TUI approvals | TUI/Safety | Current TUI denies write/shell tools unless started with `--yes`. |
+| in-progress | Long-running task state | TUI | Shows a “Working...” marker plus live tool and approval events. |
+| completed | TUI approvals | TUI/Safety | Chat mode now asks inline for write, shell, and network approvals unless `--yes` is set. |
 | planned | Streaming model responses | Runtime/TUI | Render tokens as they arrive. |
-| planned | Tool timeline | TUI | Show tool calls, results, failures, and approvals inline. |
-| planned | Interactive approval panel | TUI/Safety | Show command/diff and allow approve/deny from the TUI. |
+| completed | Tool timeline | TUI | Shows tool calls, results, failures, and approval decisions inline. |
+| in-progress | Interactive approval panel | TUI/Safety | Allows approve/deny from the TUI; richer command and diff rendering remains planned. |
 | planned | Diff viewer | TUI/Tools | Inspect `write_patch` and `write_file` changes before approval. |
 | planned | Better error panel | TUI | Show model/tool errors without losing chat context. |
-| planned | TUI model tests | Testing | Key handling, busy state, and resume rendering. |
+| in-progress | TUI model tests | Testing | Approval key handling and event rendering have coverage; busy state and resume rendering still need tests. |
 
 ## Phase 3: Session Intelligence And Context
 
@@ -180,10 +180,10 @@ Goal: turn the local MVP into a distributable developer tool with reliable build
 
 ## Near-Term Priority Order
 
-1. Interactive TUI approvals.
+1. TUI diff preview before file writes and patches.
 2. Streaming model responses.
-3. Proper TOML parser and config validation.
-4. Fake model server tests for the agent loop.
+3. Better error panel.
+4. TUI busy state and resume rendering tests.
 5. Context compaction.
-6. Safer command execution without default `sh -c`.
-7. Diff preview before file writes and patches.
+6. Backend capability detection for streaming and native tool calls.
+7. Session export and tool history reconstruction.

@@ -149,6 +149,45 @@ func TestAgentClassifiesNetworkCommandForApproval(t *testing.T) {
 	}
 }
 
+func TestAgentEmitsToolAndApprovalEvents(t *testing.T) {
+	root := t.TempDir()
+	db, err := store.Open(filepath.Join(root, "locha.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	var events []Event
+	agent := New(Options{
+		Config: config.Defaults(root),
+		Tools:  tools.NewRegistry(root),
+		Store:  db,
+		Approver: ApproverFunc(func(req ApprovalRequest) bool {
+			return req.Kind == "write"
+		}),
+		Observer: ObserverFunc(func(event Event) {
+			events = append(events, event)
+		}),
+		SessionID: 1,
+	})
+	_, err = agent.executeTool(context.Background(), toolCall{
+		Name:      "write_file",
+		Arguments: json.RawMessage(`{"path":"note.txt","content":"hello"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got []string
+	for _, event := range events {
+		got = append(got, event.Type)
+	}
+	want := []string{"tool_requested", "approval_requested", "approval_approved", "tool_completed"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("events = %v, want %v", got, want)
+	}
+}
+
 func writeTestFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o644)
 }

@@ -226,7 +226,13 @@ func chatCmd(cfgPath *string, yes *bool) *cobra.Command {
 			}
 			defer rt.Close()
 
-			p := tea.NewProgram(tui.New(rt.Agent), tea.WithAltScreen())
+			var model tui.Model
+			if rt.AutoApprove {
+				model = tui.NewAutoApproved(rt.Agent)
+			} else {
+				model = tui.New(rt.Agent)
+			}
+			p := tea.NewProgram(model, tea.WithAltScreen())
 			_, err = p.Run()
 			return err
 		},
@@ -356,7 +362,13 @@ func sessionsCmd(cfgPath *string, yes *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			p := tea.NewProgram(tui.NewWithHistory(rt.Agent, messages), tea.WithAltScreen())
+			var model tui.Model
+			if rt.AutoApprove {
+				model = tui.NewWithHistoryAutoApproved(rt.Agent, messages)
+			} else {
+				model = tui.NewWithHistory(rt.Agent, messages)
+			}
+			p := tea.NewProgram(model, tea.WithAltScreen())
 			_, err = p.Run()
 			return err
 		},
@@ -365,8 +377,9 @@ func sessionsCmd(cfgPath *string, yes *bool) *cobra.Command {
 }
 
 type runtime struct {
-	Agent *agent.Agent
-	Store *store.Store
+	Agent       *agent.Agent
+	Store       *store.Store
+	AutoApprove bool
 }
 
 func (r *runtime) Close() {
@@ -416,5 +429,5 @@ func buildRuntime(cfgPath string, yes bool, tuiMode bool, sessionID int64) (*run
 		MaxSteps:  cfg.Agent.MaxSteps,
 		SessionID: sessionID,
 	})
-	return &runtime{Agent: agent, Store: db}, nil
+	return &runtime{Agent: agent, Store: db, AutoApprove: yes || cfg.Approval.AutoApprove}, nil
 }

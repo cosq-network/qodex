@@ -123,7 +123,7 @@ For prompts that need file writes or shell commands:
 locha --yes run "Run the Go tests and fix the failing test"
 ```
 
-Without `--yes`, `locha run` asks before writes and shell commands. In the current MVP, the TUI denies writes and shell commands unless started with `--yes`.
+Without `--yes`, `locha run` asks before writes, shell commands, and network commands. In chat mode, Locha shows approval requests inline; press `y` to approve or `n` to deny.
 
 ## Common Prompts
 
@@ -171,7 +171,7 @@ install dependencies
 use network commands
 ```
 
-Review command text and file diffs before approving them.
+Review command text and file change details before approving them. A richer diff viewer is planned.
 
 ## Skills
 
