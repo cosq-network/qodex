@@ -111,11 +111,11 @@ Goal: make longer coding sessions useful by reconstructing context correctly, co
 | completed | Conversation reconstruction | Agent/Persistence | Resumed sessions load prior user/assistant messages and tool call history. |
 | completed | Tool history restoration | Persistence/Agent | Tool calls and results are loaded and summarized into model context on resume. |
 | completed | Context compaction | Agent | Automatically compacts conversation history when approaching context limit. |
-| planned | Better planning state | Agent | Track current task, files inspected, and actions taken explicitly. |
-| planned | Non-interactive resume | CLI/Agent | Continue a prior session through `locha run --session <id>`. |
+| completed | Better planning state | Agent | Track current task, files inspected, and actions taken explicitly via PlanState. |
+| completed | Non-interactive resume | CLI/Agent | Continue a prior session through `locha run --session <id>`. |
 | completed | Session export | Persistence/CLI | `locha sessions export <id>` outputs JSON transcript with tool events. |
-| planned | Approval persistence | Persistence/Safety | Store approval decisions as first-class DB rows. |
-| planned | Migrations package | Persistence | Version and apply schema changes safely. |
+| completed | Approval persistence | Persistence/Safety | Store approval decisions as first-class DB rows via AddApproval. |
+| completed | Migrations package | Persistence | Version and apply schema changes safely via schema_version table. |
 
 ## Phase 4: Skills System
 
@@ -128,11 +128,11 @@ Goal: evolve skills from simple Markdown context into routable, budgeted, policy
 | completed | User skill discovery | Skills | Loads `~/.config/locha/skills/<name>/SKILL.md` when available. |
 | completed | Project skill override | Skills | Project skills override user skills with the same name. |
 | completed | Starter project skill | Skills | `locha init` creates `.locha/skills/project/SKILL.md`. |
-| in-progress | Skill selection | Skills/Agent | Explicit prompt matching and simple name matching exist. |
-| planned | `skill.toml` metadata | Skills | Add triggers, allowed tools, and context budgets. |
-| planned | Model-assisted skill routing | Skills/Agent | Let the model choose from compact skill summaries. |
-| planned | Skill context slicing | Skills/Agent | Include only relevant sections for large skills. |
-| planned | Skill script policy | Skills/Safety | Treat scripts as approved shell commands with clear provenance. |
+| completed | Skill selection | Skills/Agent | Keyword-based matching from headings and body content, project skill always included, `/skill <name>` explicit invocation. |
+| completed | `skill.toml` metadata | Skills | Add triggers, allowed tools, context budgets, and predefined scripts. |
+| completed | Model-assisted skill routing | Skills/Agent | Let the model choose from compact skill summaries via SelectViaModel, with heuristic fallback. Controlled by agent.skill_routing config (auto/model). |
+| completed | Skill context slicing | Skills/Agent | Include only relevant sections for large skills via RenderSliced, which splits on ##/### headings, scores each section against the prompt, and includes top-scoring sections within budget. |
+| completed | Skill script policy | Skills/Safety | run_script tool executes pre-approved skill scripts without re-prompting; metadata tracks provenance (skill name + script description). |
 
 ## Phase 5: Coding Tools And Project Awareness
 

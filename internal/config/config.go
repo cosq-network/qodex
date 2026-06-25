@@ -45,7 +45,8 @@ type StoreConfig struct {
 }
 
 type AgentConfig struct {
-	MaxSteps int
+	MaxSteps     int
+	SkillRouting string
 }
 
 func Load(path string) (Config, error) {
@@ -96,7 +97,7 @@ func Defaults(projectRoot string) Config {
 			Network:     "ask",
 		},
 		Store: StoreConfig{Path: storePath},
-		Agent: AgentConfig{MaxSteps: 12},
+		Agent: AgentConfig{MaxSteps: 12, SkillRouting: "auto"},
 	}
 }
 
@@ -159,7 +160,8 @@ type fileStoreConfig struct {
 }
 
 type fileAgentConfig struct {
-	MaxSteps *int `toml:"max_steps"`
+	MaxSteps     *int    `toml:"max_steps"`
+	SkillRouting *string `toml:"skill_routing"`
 }
 
 func (f fileConfig) mergeInto(cfg *Config) {
@@ -202,6 +204,9 @@ func (f fileConfig) mergeInto(cfg *Config) {
 	if f.Agent.MaxSteps != nil {
 		cfg.Agent.MaxSteps = *f.Agent.MaxSteps
 	}
+	if f.Agent.SkillRouting != nil {
+		cfg.Agent.SkillRouting = *f.Agent.SkillRouting
+	}
 }
 
 func apply(cfg *Config, section, key, val string) {
@@ -232,6 +237,8 @@ func apply(cfg *Config, section, key, val string) {
 		cfg.Store.Path = val
 	case "agent.max_steps":
 		cfg.Agent.MaxSteps = intVal(val, cfg.Agent.MaxSteps)
+	case "agent.skill_routing":
+		cfg.Agent.SkillRouting = val
 	}
 }
 
@@ -301,6 +308,9 @@ func (c Config) Validate() error {
 	if c.Agent.MaxSteps <= 0 {
 		return fmt.Errorf("agent.max_steps must be positive")
 	}
+	if c.Agent.SkillRouting != "auto" && c.Agent.SkillRouting != "model" {
+		return fmt.Errorf("agent.skill_routing must be auto or model")
+	}
 	for key, value := range map[string]string{
 		"approval.write_files":  c.Approval.WriteFiles,
 		"approval.run_commands": c.Approval.RunCommands,
@@ -328,6 +338,7 @@ func (c Config) Values() map[string]string {
 		"approval.network":       c.Approval.Network,
 		"store.path":             c.Store.Path,
 		"agent.max_steps":        strconv.Itoa(c.Agent.MaxSteps),
+		"agent.skill_routing":    c.Agent.SkillRouting,
 	}
 }
 

@@ -41,6 +41,7 @@ func NewRegistry(projectRoot string) *Registry {
 	r.add("write_file", "Write a complete file under the project root", "write", r.writeFile)
 	r.add("write_patch", "Apply a unified diff under the project root", "write", r.writePatch)
 	r.add("run_command", "Run a command in the project root", "shell", r.runCommand)
+	r.add("run_script", "Run a pre-approved script from an active skill by description", "shell", r.runScript)
 	r.add("git_status", "Show git status", "read", r.gitStatus)
 	r.add("git_diff", "Show git diff", "read", r.gitDiff)
 	return r
@@ -512,6 +513,10 @@ func (r *Registry) runCommand(ctx context.Context, raw json.RawMessage) (Result,
 		return res, err
 	}
 	return res, nil
+}
+
+func (r *Registry) runScript(ctx context.Context, raw json.RawMessage) (Result, error) {
+	return Result{OK: false, Summary: "run_script is handled by the agent"}, fmt.Errorf("run_script must be dispatched by the agent")
 }
 
 func (r *Registry) gitStatus(ctx context.Context, raw json.RawMessage) (Result, error) {

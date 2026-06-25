@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"github.com/benoybose/locha/internal/config"
@@ -45,6 +46,8 @@ type Agent struct {
 	streamCallback func(string)
 	streaming      bool
 	planState      PlanState
+	allowedTools   []string
+	selectedSkills []skills.Skill
 }
 
 type ApprovalRequest struct {
@@ -134,6 +137,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
 		a.sessionID = id
 	}
 	if len(a.messages) == 0 {
+		a.selectSkills(prompt)
 		a.messages = append(a.messages, model.Message{Role: "system", Content: a.systemPrompt(prompt)})
 		if a.sessionID != 0 {
 			stored, err := a.store.ListMessages(ctx, a.sessionID)
@@ -252,8 +256,24 @@ func (a *Agent) chat(ctx context.Context) (string, error) {
 	return full.String(), nil
 }
 
+func (a *Agent) selectSkills(userPrompt string) {
+	if a.cfg.Agent.SkillRouting == "model" && a.client != nil {
+		ask := func(ctx context.Context, msg string) (string, error) {
+			msgs := []model.Message{{Role: "user", Content: msg}}
+			return a.client.Chat(ctx, msgs, 0.0, 1.0)
+		}
+		modelSelected, err := skills.SelectViaModel(a.skills, userPrompt, ask)
+		if err == nil && modelSelected != nil {
+			a.selectedSkills = modelSelected
+			a.allowedTools = skills.AllowedTools(modelSelected)
+			return
+		}
+	}
+	a.selectedSkills = skills.Select(a.skills, userPrompt)
+	a.allowedTools = skills.AllowedTools(a.selectedSkills)
+}
+
 func (a *Agent) systemPrompt(userPrompt string) string {
-	selected := skills.Select(a.skills, userPrompt)
 	var b strings.Builder
 	b.WriteString("You are Locha, a local coding agent running on the user's machine.\n")
 	b.WriteString("You must not claim to have read, changed, or executed anything unless a tool result proves it.\n")
@@ -273,12 +293,46 @@ func (a *Agent) systemPrompt(userPrompt string) string {
 		}
 	}
 	b.WriteString("\n")
-	b.WriteString(a.tools.Prompt())
-	if rendered := skills.Render(selected, 8000); rendered != "" {
+	toolPrompt := a.tools.Prompt()
+	if a.allowedTools != nil {
+		toolPrompt = filterToolPrompt(toolPrompt, a.allowedTools)
+	}
+	b.WriteString(toolPrompt)
+	if rendered := skills.RenderSliced(a.selectedSkills, userPrompt, 8000); rendered != "" {
 		b.WriteString("\n")
 		b.WriteString(rendered)
 	}
+	if scripts := skills.Scripts(a.selectedSkills); len(scripts) > 0 {
+		b.WriteString("\nPre-approved scripts — use run_script with the description to execute without approval:\n")
+		for _, s := range scripts {
+			b.WriteString("- ")
+			b.WriteString(s.Description)
+			b.WriteString(": `")
+			b.WriteString(s.Command)
+			b.WriteString("`\n")
+		}
+	}
 	return b.String()
+}
+
+func filterToolPrompt(prompt string, allowed []string) string {
+	allowedSet := make(map[string]bool, len(allowed))
+	for _, name := range allowed {
+		allowedSet[name] = true
+	}
+	var out strings.Builder
+	lines := strings.Split(prompt, "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "- ") {
+			name := strings.Fields(line[2:])
+			if len(name) > 0 && !allowedSet[name[0][:len(name[0])-1]] {
+				continue
+			}
+		}
+		out.WriteString(line)
+		out.WriteString("\n")
+	}
+	return strings.TrimRight(out.String(), "\n")
 }
 
 type toolCallEnvelope struct {
@@ -326,6 +380,23 @@ func looksLikeToolCall(content string) bool {
 }
 
 func (a *Agent) executeTool(ctx context.Context, call toolCall) (string, error) {
+	if call.Name == "run_script" {
+		return a.executeScript(ctx, call)
+	}
+
+	if a.allowedTools != nil {
+		allowed := false
+		for _, name := range a.allowedTools {
+			if call.Name == name {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return "", fmt.Errorf("tool %q is not allowed by active skills", call.Name)
+		}
+	}
+
 	tool, ok := a.tools.Get(call.Name)
 	if !ok {
 		return "", fmt.Errorf("unknown tool: %s", call.Name)
@@ -376,6 +447,74 @@ func (a *Agent) executeTool(ctx context.Context, call toolCall) (string, error) 
 	}
 	if err != nil && res.Content == "" {
 		return string(raw), err
+	}
+	return string(raw), nil
+}
+
+func (a *Agent) executeScript(ctx context.Context, call toolCall) (string, error) {
+	var args struct {
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(call.Arguments, &args); err != nil || args.Description == "" {
+		return "", fmt.Errorf("run_script requires a \"description\" field")
+	}
+
+	var found *skills.Script
+	var skillName string
+	for _, skill := range a.selectedSkills {
+		for _, script := range skill.Meta.Scripts {
+			desc := strings.ToLower(script.Description)
+			cmd := strings.ToLower(script.Command)
+			needle := strings.ToLower(args.Description)
+			if strings.Contains(desc, needle) || strings.Contains(cmd, needle) {
+				s := script
+				found = &s
+				skillName = skill.Name
+				break
+			}
+		}
+		if found != nil {
+			break
+		}
+	}
+	if found == nil {
+		return "", fmt.Errorf("no script matching %q found in active skills", args.Description)
+	}
+
+	callID, _ := a.store.AddToolCall(ctx, a.sessionID, "run_script", string(call.Arguments), "approved")
+
+	effect := "shell"
+	summary := fmt.Sprintf("run_script %q (from skill %q)", found.Description, skillName)
+	a.emit(Event{Type: "tool_requested", Tool: "run_script", Effect: effect, Summary: summary})
+	a.emit(Event{Type: "approval_requested", Tool: "run_script", Effect: effect, Summary: summary, Detail: "pre-approved script: " + found.Command})
+	a.emit(Event{Type: "approval_approved", Tool: "run_script", Effect: effect, Summary: summary})
+	_ = a.store.AddApproval(ctx, a.sessionID, callID, "run_script", effect, summary, true)
+
+	cmd := exec.CommandContext(ctx, "sh", "-c", found.Command)
+	cmd.Dir = a.cfg.ProjectRoot
+	output, err := cmd.CombinedOutput()
+
+	result := tools.Result{
+		OK:      err == nil,
+		Summary: fmt.Sprintf("script %q from skill %q executed", found.Description, skillName),
+		Content: string(output),
+		Metadata: map[string]interface{}{
+			"script":    found.Description,
+			"skill":     skillName,
+			"command":   found.Command,
+			"provenance": fmt.Sprintf("skill:%s/script:%s", skillName, found.Description),
+		},
+	}
+	raw, _ := json.Marshal(result)
+	errText := ""
+	if err != nil {
+		errText = err.Error()
+	}
+	_ = a.store.AddToolResult(ctx, callID, string(raw), errText)
+	if err != nil {
+		a.emit(Event{Type: "tool_failed", Tool: "run_script", Effect: effect, Summary: result.Summary, Error: err.Error()})
+	} else {
+		a.emit(Event{Type: "tool_completed", Tool: "run_script", Effect: effect, Summary: result.Summary})
 	}
 	return string(raw), nil
 }

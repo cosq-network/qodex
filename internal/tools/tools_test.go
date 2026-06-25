@@ -113,3 +113,17 @@ func TestRejectDangerousShellCommand(t *testing.T) {
 		t.Fatal("expected dangerous command rejection")
 	}
 }
+
+func TestRunScriptRegistered(t *testing.T) {
+	registry := NewRegistry(t.TempDir())
+	tool, ok := registry.Get("run_script")
+	if !ok {
+		t.Fatal("run_script not registered")
+	}
+	if tool.Description == "" {
+		t.Fatal("run_script has no description")
+	}
+	if tool.Effect != "shell" {
+		t.Fatalf("expected effect shell, got %s", tool.Effect)
+	}
+}

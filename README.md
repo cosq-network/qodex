@@ -4,20 +4,22 @@ Locha is a local-first coding agent CLI written in Go. It uses a terminal UI wit
 
 The intended runtime is `llama.cpp`, not Ollama. Other OpenAI-compatible backends such as vLLM and SGLang can be supported as advanced runtime options without changing the agent core. Backend capability detection is performed at startup to enable streaming when supported.
 
-## Current MVP
+## Current Status
 
-The repository currently includes a usable MVP with:
+The repository includes a fully featured coding agent with:
 
 - Cobra CLI commands: `init`, `config`, `chat`, `run`, `doctor`, `skills list`, `skills show`, `sessions list`, `sessions resume`, and `sessions export`.
-- Bubble Tea terminal chat UI with streaming token rendering and inline diff preview.
-- OpenAI-compatible `/v1/chat/completions` client for `llama.cpp` with SSE streaming.
-- Prompt-based JSON tool calling for broad backend compatibility.
-- Built-in tools: `list_files`, `read_file`, `search_text`, `write_file`, `write_patch`, `run_command`, `git_status`, and `git_diff`.
-- Project and user skills loaded from `SKILL.md` files.
-- SQLite session/tool event storage and TUI session resume with tool history reconstruction.
-- Approval gates for write, shell, and network tools, with inline TUI approvals, diff preview, persistent error status bar, and `--yes` for explicit auto-approval.
-- Context compaction for long sessions on small local models.
-- Backend capability detection for streaming and model availability.
+- Bubble Tea terminal chat UI with streaming token rendering, inline diff preview, spinner, error panel, and multi-line input with `@` file autocomplete.
+- OpenAI-compatible `/v1/chat/completions` client with SSE streaming and capability detection.
+- Prompt-based JSON tool calling with validation repair loop.
+- Built-in tools: `list_files`, `read_file`, `search_text`, `write_file`, `write_patch`, `run_command`, `git_status`, `git_diff`, and `run_script` (pre-approved skill scripts).
+- Skill system: `skill.toml` metadata (triggers, allowed_tools, context_budget, scripts), model-assisted skill routing (`agent.skill_routing`), keyword/heuristic selection, section-aware context slicing, and pre-approved script policy with provenance tracking.
+- SQLite session/tool event storage with WAL mode, migrations, and approval persistence.
+- Session resume with full tool history reconstruction (TUI and non-interactive via `--session`).
+- Approval gates for write, shell, and network tools with inline diff preview and `--yes` auto-approval.
+- Planning state tracking (current task, inspected files, actions taken) in system prompt.
+- Context compaction (keeps last 8 messages when approaching token limit).
+- LCS-based unified diff generation for write tool previews.
 
 ## Goals
 

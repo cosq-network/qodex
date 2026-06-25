@@ -14,6 +14,7 @@ import (
 
 	"github.com/benoybose/locha/internal/config"
 	"github.com/benoybose/locha/internal/model"
+	"github.com/benoybose/locha/internal/skills"
 	"github.com/benoybose/locha/internal/store"
 	"github.com/benoybose/locha/internal/tools"
 )
@@ -186,6 +187,100 @@ func TestAgentEmitsToolAndApprovalEvents(t *testing.T) {
 	want := []string{"tool_requested", "approval_requested", "approval_approved", "tool_completed"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("events = %v, want %v", got, want)
+	}
+}
+
+func TestExecuteScriptRunsPreApprovedScript(t *testing.T) {
+	root := t.TempDir()
+	db, err := store.Open(filepath.Join(root, "locha.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	agent := New(Options{
+		Config:    config.Defaults(root),
+		Tools:     tools.NewRegistry(root),
+		Store:     db,
+		Approver:  ApproverFunc(func(ApprovalRequest) bool { return true }),
+		SessionID: 1,
+	})
+	agent.selectedSkills = []skills.Skill{
+		{
+			Name: "project",
+			Meta: skills.Metadata{
+				Scripts: []skills.Script{
+					{Description: "Say hello", Command: "echo hello from script", Tool: "run_command"},
+				},
+			},
+		},
+	}
+
+	result, err := agent.executeTool(context.Background(), toolCall{
+		Name:      "run_script",
+		Arguments: json.RawMessage(`{"description":"Say hello"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "hello from script") {
+		t.Fatalf("expected script output in result, got: %s", result)
+	}
+	if !strings.Contains(result, "provenance") {
+		t.Fatalf("expected provenance metadata, got: %s", result)
+	}
+}
+
+func TestExecuteScriptRejectsUnknownDescription(t *testing.T) {
+	root := t.TempDir()
+	db, err := store.Open(filepath.Join(root, "locha.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	agent := New(Options{
+		Config:    config.Defaults(root),
+		Tools:     tools.NewRegistry(root),
+		Store:     db,
+		Approver:  ApproverFunc(func(ApprovalRequest) bool { return true }),
+		SessionID: 1,
+	})
+	agent.selectedSkills = []skills.Skill{
+		{Name: "project", Meta: skills.Metadata{Scripts: []skills.Script{{Description: "Run tests", Command: "go test ./..."}}}},
+	}
+
+	_, err2 := agent.executeTool(context.Background(), toolCall{
+		Name:      "run_script",
+		Arguments: json.RawMessage(`{"description":"nonexistent"}`),
+	})
+	if err2 == nil {
+		t.Fatal("expected error for unknown script")
+	}
+}
+
+func TestExecuteScriptRejectsNoDescription(t *testing.T) {
+	root := t.TempDir()
+	db, err := store.Open(filepath.Join(root, "locha.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	agent := New(Options{
+		Config:    config.Defaults(root),
+		Tools:     tools.NewRegistry(root),
+		Store:     db,
+		Approver:  ApproverFunc(func(ApprovalRequest) bool { return true }),
+		SessionID: 1,
+	})
+
+	_, err = agent.executeTool(context.Background(), toolCall{
+		Name:      "run_script",
+		Arguments: json.RawMessage(`{}`),
+	})
+	if err == nil {
+		t.Fatal("expected error for missing description")
 	}
 }
 

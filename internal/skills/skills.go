@@ -1,16 +1,35 @@
 package skills
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/pelletier/go-toml/v2"
 )
+
+type Metadata struct {
+	Triggers      []string `toml:"triggers"`
+	AllowedTools  []string `toml:"allowed_tools"`
+	ContextBudget int      `toml:"context_budget"`
+	Scripts       []Script `toml:"scripts"`
+}
+
+type Script struct {
+	Description string `toml:"description"`
+	Command     string `toml:"command"`
+	Tool        string `toml:"tool"`
+}
 
 type Skill struct {
 	Name    string
 	Path    string
 	Content string
+	Meta    Metadata
 }
 
 func Discover(projectRoot string) ([]Skill, error) {
@@ -40,7 +59,11 @@ func Discover(projectRoot string) ([]Skill, error) {
 			if err != nil {
 				continue
 			}
-			byName[name] = Skill{Name: name, Path: skillPath, Content: string(content)}
+			skill := Skill{Name: name, Path: skillPath, Content: string(content)}
+			if metaBytes, err := os.ReadFile(filepath.Join(skillPath, "skill.toml")); err == nil {
+				_ = toml.Unmarshal(metaBytes, &skill.Meta)
+			}
+			byName[name] = skill
 		}
 	}
 
@@ -103,9 +126,16 @@ func Select(all []Skill, prompt string) []Skill {
 
 func matchScore(skill Skill, prompt string) int {
 	score := 0
+	promptLower := strings.ToLower(prompt)
+
+	for _, trigger := range skill.Meta.Triggers {
+		if strings.Contains(promptLower, strings.ToLower(trigger)) {
+			score += 20
+		}
+	}
 
 	name := strings.ToLower(skill.Name)
-	if strings.Contains(prompt, name) {
+	if strings.Contains(promptLower, name) {
 		score += 10
 	}
 
@@ -131,7 +161,7 @@ func matchScore(skill Skill, prompt string) int {
 				continue
 			}
 			seen[w] = true
-			if strings.Contains(prompt, w) {
+			if strings.Contains(promptLower, w) {
 				if isHeading {
 					score += 3
 				} else {
@@ -144,6 +174,100 @@ func matchScore(skill Skill, prompt string) int {
 	return score
 }
 
+func Summarize(skills []Skill) string {
+	var b strings.Builder
+	for _, s := range skills {
+		b.WriteString("- ")
+		b.WriteString(s.Name)
+		if len(s.Meta.Triggers) > 0 {
+			b.WriteString(" (triggers: ")
+			b.WriteString(strings.Join(s.Meta.Triggers, ", "))
+			b.WriteString(")")
+		}
+		firstLine := strings.SplitN(strings.TrimSpace(s.Content), "\n", 2)[0]
+		firstLine = strings.TrimLeft(firstLine, "# ")
+		if firstLine != "" {
+			b.WriteString(": ")
+			b.WriteString(firstLine)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func SelectViaModel(all []Skill, prompt string, ask func(ctx context.Context, msg string) (string, error)) ([]Skill, error) {
+	ctx := context.Background()
+
+	summaries := Summarize(all)
+	selectionPrompt := `You are a skill router. Select the most relevant skills for the given task.
+
+Available skills:
+` + summaries + `
+Task: ` + prompt + `
+
+Respond with ONLY a JSON object containing the names of relevant skills:
+{"skills": ["name1", "name2"]}
+Return an empty array if no skills are relevant. Do not include the "project" skill.`
+
+	resp, err := ask(ctx, selectionPrompt)
+	if err != nil {
+		return nil, err
+	}
+
+	cleaned := strings.TrimSpace(resp)
+	cleaned = strings.TrimPrefix(cleaned, "```json")
+	cleaned = strings.TrimPrefix(cleaned, "```")
+	cleaned = strings.TrimSuffix(cleaned, "```")
+	cleaned = strings.TrimSpace(cleaned)
+
+	var result struct {
+		Skills []string `json:"skills"`
+	}
+	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
+		return nil, fmt.Errorf("parse selection: %w", err)
+	}
+
+	byName := make(map[string]Skill, len(all))
+	for _, s := range all {
+		byName[s.Name] = s
+	}
+
+	var project *Skill
+	var out []Skill
+	anyRestrict := false
+	for _, name := range result.Skills {
+		if s, ok := byName[name]; ok {
+			if strings.ToLower(name) == "project" {
+				continue
+			}
+			if len(s.Meta.AllowedTools) > 0 {
+				anyRestrict = true
+			}
+			if len(out) < 2 {
+				out = append(out, s)
+			}
+		}
+	}
+	for _, s := range all {
+		if strings.ToLower(s.Name) == "project" {
+			p := s
+			project = &p
+			break
+		}
+	}
+
+	if anyRestrict && len(out) == 0 {
+		return nil, nil
+	}
+
+	resultSkills := make([]Skill, 0, 3)
+	if project != nil {
+		resultSkills = append(resultSkills, *project)
+	}
+	resultSkills = append(resultSkills, out...)
+	return resultSkills, nil
+}
+
 func Render(skills []Skill, budget int) string {
 	if len(skills) == 0 {
 		return ""
@@ -153,8 +277,12 @@ func Render(skills []Skill, budget int) string {
 	used := 0
 	for _, skill := range skills {
 		content := skill.Content
-		if len(content) > budget/len(skills) {
-			content = content[:budget/len(skills)]
+		skillBudget := budget / len(skills)
+		if skill.Meta.ContextBudget > 0 && skill.Meta.ContextBudget < skillBudget {
+			skillBudget = skill.Meta.ContextBudget
+		}
+		if len(content) > skillBudget {
+			content = content[:skillBudget]
 		}
 		used += len(content)
 		if used > budget {
@@ -167,4 +295,187 @@ func Render(skills []Skill, budget int) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+func AllowedTools(selected []Skill) []string {
+	var intersection []string
+	anyRestrict := false
+	for i, skill := range selected {
+		if len(skill.Meta.AllowedTools) > 0 {
+			if !anyRestrict {
+				intersection = make([]string, len(skill.Meta.AllowedTools))
+				copy(intersection, skill.Meta.AllowedTools)
+				anyRestrict = true
+			} else {
+				intersection = intersectStrings(intersection, skill.Meta.AllowedTools)
+			}
+			_ = i
+		}
+	}
+	if !anyRestrict {
+		return nil
+	}
+	return intersection
+}
+
+func Scripts(selected []Skill) []Script {
+	var out []Script
+	for _, skill := range selected {
+		out = append(out, skill.Meta.Scripts...)
+	}
+	return out
+}
+
+type section struct {
+	heading string
+	body    string
+	score   int
+}
+
+func splitSections(content string) (preamble string, sections []section) {
+	lines := strings.Split(content, "\n")
+	var current *section
+	for _, line := range lines {
+		if strings.HasPrefix(line, "##") {
+			if current != nil {
+				sections = append(sections, *current)
+			}
+			current = &section{heading: line}
+			continue
+		}
+		if current != nil {
+			if current.body != "" {
+				current.body += "\n"
+			}
+			current.body += line
+		} else {
+			if preamble != "" {
+				preamble += "\n"
+			}
+			preamble += line
+		}
+	}
+	if current != nil {
+		sections = append(sections, *current)
+	}
+	return
+}
+
+func scoreSectionPrompt(s section, promptLower string) int {
+	score := 0
+	seen := map[string]bool{}
+
+	headingWords := strings.Fields(strings.ToLower(s.heading))
+	for _, w := range headingWords {
+		w = strings.Trim(w, "# .,:;!?()[]")
+		if len(w) < 2 || seen[w] {
+			continue
+		}
+		seen[w] = true
+		if strings.Contains(promptLower, w) {
+			score += 5
+		}
+	}
+
+	bodyWords := strings.Fields(strings.ToLower(s.body))
+	for _, w := range bodyWords {
+		w = strings.Trim(w, ".,:;!?()[]{}'\"`")
+		if len(w) < 4 || seen[w] {
+			continue
+		}
+		seen[w] = true
+		if strings.Contains(promptLower, w) {
+			score += 1
+		}
+	}
+
+	return score
+}
+
+func RenderSliced(skills []Skill, prompt string, budget int) string {
+	if len(skills) == 0 {
+		return ""
+	}
+	promptLower := strings.ToLower(prompt)
+	var b strings.Builder
+	b.WriteString("Loaded skills:\n")
+	used := 0
+
+	for _, skill := range skills {
+		skillBudget := budget / len(skills)
+		if skill.Meta.ContextBudget > 0 && skill.Meta.ContextBudget < skillBudget {
+			skillBudget = skill.Meta.ContextBudget
+		}
+		if skillBudget <= 0 {
+			continue
+		}
+
+		preamble, sections := splitSections(skill.Content)
+		remaining := skillBudget
+
+		b.WriteString("\n# Skill: ")
+		b.WriteString(skill.Name)
+		b.WriteString("\n")
+		if preamble != "" {
+			preambleLen := len(preamble)
+			if preambleLen > remaining {
+				preambleLen = remaining
+			}
+			if preambleLen > 0 {
+				b.WriteString(preamble[:preambleLen])
+				b.WriteString("\n")
+				remaining -= preambleLen
+				used += preambleLen
+			}
+		}
+
+		if remaining > 0 && len(sections) > 0 {
+			for i := range sections {
+				sections[i].score = scoreSectionPrompt(sections[i], promptLower)
+			}
+			sort.Slice(sections, func(i, j int) bool {
+				return sections[i].score > sections[j].score
+			})
+
+			for _, sec := range sections {
+				if remaining <= 0 {
+					break
+				}
+				secContent := sec.heading
+				if sec.body != "" {
+					secContent += "\n" + sec.body
+				}
+				secLen := len(secContent)
+				if secLen > remaining {
+					secLen = remaining
+				}
+				if secLen > 0 {
+					b.WriteString(secContent[:secLen])
+					b.WriteString("\n")
+					remaining -= secLen
+					used += secLen
+				}
+			}
+		}
+
+		if used >= budget {
+			break
+		}
+	}
+
+	return b.String()
+}
+
+func intersectStrings(a, b []string) []string {
+	set := make(map[string]bool, len(b))
+	for _, s := range b {
+		set[s] = true
+	}
+	var out []string
+	for _, s := range a {
+		if set[s] {
+			out = append(out, s)
+		}
+	}
+	return out
 }

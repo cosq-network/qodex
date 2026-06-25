@@ -117,6 +117,45 @@ func TestSetProjectValueRejectsUnknownKey(t *testing.T) {
 	}
 }
 
+func TestDefaultsIncludeSkillRouting(t *testing.T) {
+	cfg := Defaults("/test")
+	if cfg.Agent.SkillRouting != "auto" {
+		t.Fatalf("expected skill_routing=auto, got %q", cfg.Agent.SkillRouting)
+	}
+}
+
+func TestValidateAcceptsSkillRoutingAuto(t *testing.T) {
+	cfg := Defaults("/test")
+	cfg.Agent.SkillRouting = "auto"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected no error for auto, got %v", err)
+	}
+}
+
+func TestValidateAcceptsSkillRoutingModel(t *testing.T) {
+	cfg := Defaults("/test")
+	cfg.Agent.SkillRouting = "model"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected no error for model, got %v", err)
+	}
+}
+
+func TestValidateRejectsInvalidSkillRouting(t *testing.T) {
+	cfg := Defaults("/test")
+	cfg.Agent.SkillRouting = "invalid"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "skill_routing") {
+		t.Fatalf("expected skill_routing validation error, got %v", err)
+	}
+}
+
+func TestValuesIncludeSkillRouting(t *testing.T) {
+	cfg := Defaults("/test")
+	vals := cfg.Values()
+	if v, ok := vals["agent.skill_routing"]; !ok || v != "auto" {
+		t.Fatalf("expected agent.skill_routing=auto in values, got %q", v)
+	}
+}
+
 func chdir(t *testing.T, dir string) func() {
 	t.Helper()
 	original, err := os.Getwd()
