@@ -1,10 +1,10 @@
 # Developer Guide
 
-This document defines the implementation architecture for Locha.
+This document defines the implementation architecture for Qodex.
 
 ## Product Shape
 
-Locha is a local coding agent that runs in a terminal. It should feel like a serious developer tool: fast startup, stable keyboard behavior, clear diffs, explicit approvals, and predictable project-local behavior.
+Qodex is a local coding agent that runs in a terminal. It should feel like a serious developer tool: fast startup, stable keyboard behavior, clear diffs, explicit approvals, and predictable project-local behavior.
 
 The MVP optimizes for one local model served through `llama.cpp` using an OpenAI-compatible HTTP API. vLLM and SGLang should be optional endpoint-compatible backends.
 
@@ -29,20 +29,20 @@ Use `spf13/cobra`.
 Suggested commands:
 
 ```text
-locha
-locha init
-locha chat
-locha run "prompt"
-locha config
-locha config list
-locha config get <key>
-locha config set <key> <value>
-locha models check
-locha doctor
-locha skills list
-locha skills show <name>
-locha sessions list
-locha sessions resume <id>
+qodex
+qodex init
+qodex chat
+qodex run "prompt"
+qodex config
+qodex config list
+qodex config get <key>
+qodex config set <key> <value>
+qodex models check
+qodex doctor
+qodex skills list
+qodex skills show <name>
+qodex sessions list
+qodex sessions resume <id>
 ```
 
 ### Terminal UI
@@ -105,7 +105,7 @@ Treat the database as an event log first. Derived indexes can come later.
 
 ### Primary Backend: llama.cpp
 
-Locha should target the `llama.cpp` server OpenAI-compatible API as the primary runtime.
+Qodex should target the `llama.cpp` server OpenAI-compatible API as the primary runtime.
 
 Default configuration:
 
@@ -145,7 +145,7 @@ Direct `transformers` integration is not recommended for the main Go application
 Suggested Go package layout:
 
 ```text
-cmd/locha/              Cobra entrypoint
+cmd/qodex/              Cobra entrypoint
 internal/app/           app wiring
 internal/tui/           Bubble Tea models and views
 internal/agent/         agent loop and orchestration
@@ -232,21 +232,200 @@ Default policy:
 - Commands outside project root: ask.
 - Destructive commands: deny by default or require a high-friction confirmation.
 
-The approval system should be independent of the TUI so `locha run` can use the same policy.
+The approval system should be independent of the TUI so `qodex run` can use the same policy.
 
 ## Configuration
 
 Recommended locations:
 
 ```text
-Project config: .locha/config.toml
-Project skills: .locha/skills/
-User config: ~/.config/locha/config.toml
-User skills: ~/.config/locha/skills/
-Database: .locha/locha.db by default for the MVP
+Project config: .qodex/config.toml
+Project skills: .qodex/skills/
+User config: ~/.config/qodex/config.toml
+User skills: ~/.config/qodex/skills/
+Database: .qodex/qodex.db by default for the MVP
 ```
 
 User config is loaded first, then project config overrides it where explicitly set.
+
+## Getting Started With Development
+
+### Prerequisites
+
+- Go 1.26+ (check `go version`)
+- A local `llama.cpp` server (recommended) or any OpenAI-compatible endpoint
+
+### Quick Start
+
+```bash
+# Build the binary
+go build ./cmd/qodex
+
+# List all available commands
+./qodex --help
+
+# Run the doctor to verify config and endpoint connectivity
+./qodex doctor
+
+# Start the interactive TUI chat
+./qodex chat
+
+# Run a one-shot prompt
+./qodex run "List all Go files in this project"
+
+# Review uncommitted changes
+./qodex review
+```
+
+### Testing Without A Real Model
+
+The test suite uses fake HTTP servers and does **not** require a running model. Run all tests with:
+
+```bash
+go test ./...
+```
+
+Run a specific package's tests:
+
+```bash
+go test ./internal/agent/... -v
+go test ./internal/tools/... -v
+go test ./internal/tui/... -v
+```
+
+Run a single test:
+
+```bash
+go test ./internal/agent/... -v -run TestAgentReadsFile
+```
+
+The agent tests (`internal/agent/agent_test.go`) use a `roundTripFunc` HTTP transport that returns deterministic JSON responses — no real model server is needed. See `TestAgentReadsFile` for the pattern:
+
+```go
+client := model.NewClient("http://fake.local/v1", "fake")
+client.HTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+    // Return a tool_call on first request, final answer on second
+    switch r.URL.Path {
+    case "/v1/chat/completions":
+        return jsonResponse(chatRequest{...}), nil
+    }
+    return nil, fmt.Errorf("unexpected: %s", r.URL.Path)
+})}
+```
+
+### Running With A Real Local Model
+
+1. Start `llama.cpp` server with a Qwen Coder GGUF model:
+   ```bash
+   llama-server -m qwen2.5-coder-7b-q4_k_m.gguf --host 127.0.0.1 --port 8080
+   ```
+
+2. Verify connectivity:
+   ```bash
+   ./qodex doctor
+   ```
+   Expected output:
+   ```
+   Project root: /path/to/project
+   Model endpoint: http://127.0.0.1:8080/v1
+   Model name: qwen2.5-coder
+   Runtime backend: llama.cpp
+   Model endpoint: ok
+   ```
+
+3. Run the agent:
+   ```bash
+   ./qodex chat
+   ```
+
+### Configuring The Endpoint
+
+Edit `.qodex/config.toml` or set values via the CLI:
+
+```bash
+./qodex config set model.base_url http://127.0.0.1:8080/v1
+./qodex config set model.model qwen2.5-coder
+./qodex config set runtime.temperature 0.2
+./qodex config list
+```
+
+See the full config reference with `./qodex config --help`.
+
+### Debugging Tips
+
+**Verbose test output:**
+```bash
+go test ./... -v 2>&1 | head -100
+```
+
+**Race detection:**
+```bash
+go test -race ./...
+```
+
+**Viewing SQLite state during a session:**
+```bash
+sqlite3 .qodex/qodex.db
+.tables
+select * from sessions;
+select * from messages;
+select * from tool_calls;
+```
+
+**Checking what tools are registered:**
+```bash
+grep 'r\.add(' internal/tools/tools.go
+```
+
+**Recompiling on change (watch mode):**
+```bash
+go build ./cmd/qodex && ./qodex doctor
+```
+
+**Capturing full agent log output:**
+The agent emits structured events via the `Observer` interface. Add a logging observer in `buildRuntime` (`cmd/qodex/main.go`) to inspect event flow:
+
+```go
+agt.SetObserver(agent.ObserverFunc(func(event agent.Event) {
+    log.Printf("event: type=%s tool=%s effect=%s summary=%s", event.Type, event.Tool, event.Effect, event.Summary)
+}))
+```
+
+### Common Development Workflows
+
+**Adding a new tool:**
+1. Write the executor method on `*Registry` in `internal/tools/tools.go` (or a new file).
+2. Register it with `r.add(...)` in `NewRegistry`.
+3. Add tests in `internal/tools/tools_test.go` using `t.TempDir()` and `json.Marshal` for args.
+4. Run `go test ./internal/tools/...` to verify.
+
+**Modifying the agent loop:**
+The core loop is in `internal/agent/agent.go`, method `Run()`. Each iteration:
+1. Calls `compactContext()` if approaching token limit.
+2. Calls `chat()` (streaming or non-streaming).
+3. Parses the response via `parseToolCallDetailed()`.
+4. If it's a tool call, calls `executeTool()`.
+5. If it's a final answer, returns.
+
+**Adding a database migration:**
+1. Append a `migration` struct to `var migrations` in `internal/store/migrations.go`.
+2. Increment the version number.
+3. Write the `CREATE TABLE` / `ALTER TABLE` SQL.
+4. Add store methods in `internal/store/store.go`.
+
+### Project Layout Reference
+
+```text
+cmd/qodex/              Cobra CLI entrypoint
+internal/agent/         Agent loop, tool dispatch, approval
+internal/config/        TOML config loading and validation
+internal/model/         OpenAI-compatible HTTP client
+internal/skills/        Skill discovery, selection, context slicing
+internal/store/         SQLite persistence + migrations
+internal/tools/         Tool registry and all built-in tools
+internal/tui/           Bubble Tea TUI (chat, approvals, streaming)
+docs/                   Documentation and roadmap
+```
 
 ## Testing Strategy
 
@@ -315,4 +494,4 @@ Status: SQLite session/message/tool storage, session listing, and TUI resume imp
 
 - vLLM endpoint profile.
 - SGLang endpoint profile.
-- Backend diagnostics through `locha doctor`.
+- Backend diagnostics through `qodex doctor`.

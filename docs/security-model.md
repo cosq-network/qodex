@@ -1,12 +1,12 @@
 # Security Model
 
-Locha is a local coding agent. Its core security boundary is the project root plus explicit approval for effects that can modify files, execute commands, or use the network.
+Qodex is a local coding agent. Its core security boundary is the project root plus explicit approval for effects that can modify files, execute commands, or use the network.
 
 ## Trust Assumptions
 
-- The user controls the project checkout and local Locha configuration.
+- The user controls the project checkout and local Qodex configuration.
 - The default model endpoint is local, usually `llama.cpp` at `http://127.0.0.1:8080/v1`.
-- Skills are local files loaded from `.locha/skills` and `~/.config/locha/skills`.
+- Skills are local files loaded from `.qodex/skills` and `~/.config/qodex/skills`.
 - Tool execution happens on the same machine as the CLI.
 
 If `model.base_url` points at a remote endpoint, prompts, code excerpts, skill content, and tool results may leave the machine.
@@ -21,7 +21,7 @@ Command execution supports direct `argv` execution and legacy shell commands. Di
 
 ## Command Risk Classes
 
-Locha classifies tools by effect:
+Qodex classifies tools by effect:
 
 - `read`: local inspection only.
 - `write`: file changes under the project root.
@@ -47,10 +47,10 @@ The `--yes` flag and `approval.auto_approve = true` bypass prompts. These modes 
 ## Known Limits
 
 - Shell commands can hide behavior behind scripts, aliases, subshells, and tools that perform network access internally.
-- Path validation protects Locha's built-in file tools, not arbitrary commands run through `run_command`.
+- Path validation protects Qodex's built-in file tools, not arbitrary commands run through `run_command`.
 - Symlink handling is root-relative but not a full sandbox. A shell command can still follow symlinks according to normal OS rules.
 - The TUI approval panel is intentionally minimal. Rich diff rendering before approval is still planned.
-- Locha does not yet persist approval decisions as first-class records.
+- Qodex does not yet persist approval decisions as first-class records.
 
 ## Recommended Usage
 

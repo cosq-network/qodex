@@ -1,10 +1,10 @@
 # Tool Calling And Skills
 
-This document defines Locha's local tool-calling and skills design.
+This document defines Qodex's local tool-calling and skills design.
 
 ## Design Principle
 
-The model is never trusted to perform actions directly. It may request a tool call. Locha validates the request, applies policy, executes the tool, stores the result, and gives the result back to the model.
+The model is never trusted to perform actions directly. It may request a tool call. Qodex validates the request, applies policy, executes the tool, stores the result, and gives the result back to the model.
 
 This makes the agent loop deterministic around filesystem and shell effects even when model output is imperfect.
 
@@ -203,15 +203,15 @@ Default approval: auto.
 
 ## Skills
 
-Skills are local instruction bundles. They let users and projects teach Locha repeatable workflows without changing the binary.
+Skills are local instruction bundles. They let users and projects teach Qodex repeatable workflows without changing the binary.
 
 ## Skill Locations
 
 Recommended search order:
 
 ```text
-.locha/skills/
-~/.config/locha/skills/
+.qodex/skills/
+~/.config/qodex/skills/
 ```
 
 Project skills should override user skills with the same name.
@@ -219,7 +219,7 @@ Project skills should override user skills with the same name.
 ## Skill Directory Format
 
 ```text
-.locha/skills/go-testing/
+.qodex/skills/go-testing/
   skill.toml
   SKILL.md
   examples/

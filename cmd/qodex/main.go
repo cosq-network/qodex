@@ -15,13 +15,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
-	"github.com/benoybose/locha/internal/agent"
-	"github.com/benoybose/locha/internal/config"
-	"github.com/benoybose/locha/internal/model"
-	"github.com/benoybose/locha/internal/skills"
-	"github.com/benoybose/locha/internal/store"
-	"github.com/benoybose/locha/internal/tools"
-	"github.com/benoybose/locha/internal/tui"
+	"github.com/benoybose/qodex/internal/agent"
+	"github.com/benoybose/qodex/internal/config"
+	"github.com/benoybose/qodex/internal/model"
+	"github.com/benoybose/qodex/internal/skills"
+	"github.com/benoybose/qodex/internal/store"
+	"github.com/benoybose/qodex/internal/tools"
+	"github.com/benoybose/qodex/internal/tui"
 )
 
 func main() {
@@ -36,12 +36,13 @@ func rootCmd() *cobra.Command {
 	var yes bool
 
 	cmd := &cobra.Command{
-		Use:   "locha",
+		Use:   "qodex",
 		Short: "Local-first coding agent for llama.cpp and Qwen Coder",
 	}
 	cmd.PersistentFlags().StringVar(&cfgPath, "config", "", "config file path")
 	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "auto-approve write and shell tools")
 
+	cmd.AddCommand(setupCmd())
 	cmd.AddCommand(initCmd())
 	cmd.AddCommand(configCmd(&cfgPath))
 	cmd.AddCommand(runCmd(&cfgPath, &yes))
@@ -53,10 +54,14 @@ func rootCmd() *cobra.Command {
 	return cmd
 }
 
+func needsConfig() []string {
+	return []string{"run", "chat", "review", "sessions resume"}
+}
+
 func configCmd(cfgPath *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
-		Short: "Inspect and update Locha configuration",
+		Short: "Inspect and update Qodex configuration",
 	}
 	cmd.AddCommand(&cobra.Command{
 		Use:   "list",
@@ -118,13 +123,13 @@ func initCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Create project-local Locha configuration and starter skill",
+		Short: "Create project-local Qodex configuration and starter skill",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, err := os.Getwd()
 			if err != nil {
 				return err
 			}
-			lochaDir := filepath.Join(cwd, ".locha")
+			lochaDir := filepath.Join(cwd, ".qodex")
 			configPath := filepath.Join(lochaDir, "config.toml")
 			skillDir := filepath.Join(lochaDir, "skills", "project")
 			skillPath := filepath.Join(skillDir, "SKILL.md")
@@ -143,7 +148,7 @@ func initCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing Locha files")
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing Qodex files")
 	return cmd
 }
 
@@ -154,6 +159,15 @@ func runCmd(cfgPath *string, yes *bool) *cobra.Command {
 		Short: "Run a one-shot agent prompt",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			if !ensureConfigExists(cwd) {
+				if err := promptRunSetup(cwd); err != nil {
+					return err
+				}
+			}
 			rt, err := buildRuntime(*cfgPath, *yes, false, sessionID)
 			if err != nil {
 				return err
@@ -165,7 +179,7 @@ func runCmd(cfgPath *string, yes *bool) *cobra.Command {
 
 			result, err := rt.Agent.Run(ctx, args[0])
 			if err != nil {
-				return err
+				return wrapModelError(err)
 			}
 			fmt.Println(result)
 			return nil
@@ -201,7 +215,7 @@ run_commands = "ask"
 network = "ask"
 
 [store]
-path = ".locha/locha.db"
+path = ".qodex/qodex.db"
 
 [agent]
 max_steps = 12
@@ -225,6 +239,15 @@ func chatCmd(cfgPath *string, yes *bool) *cobra.Command {
 		Use:   "chat",
 		Short: "Start the terminal chat UI",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			if !ensureConfigExists(cwd) {
+				if err := promptRunSetup(cwd); err != nil {
+					return err
+				}
+			}
 			rt, err := buildRuntime(*cfgPath, *yes, true, 0)
 			if err != nil {
 				return err
@@ -429,6 +452,15 @@ func reviewCmd(cfgPath *string, yes *bool) *cobra.Command {
 		Short: "Review uncommitted changes in the repository",
 		Long:  "Analyzes uncommitted git changes and produces a structured code review.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			if !ensureConfigExists(cwd) {
+				if err := promptRunSetup(cwd); err != nil {
+					return err
+				}
+			}
 			rt, err := buildRuntime(*cfgPath, *yes, false, 0)
 			if err != nil {
 				return err
@@ -439,7 +471,7 @@ func reviewCmd(cfgPath *string, yes *bool) *cobra.Command {
 			defer cancel()
 			result, err := rt.Agent.Run(ctx, reviewPrompt)
 			if err != nil {
-				return err
+				return wrapModelError(err)
 			}
 			fmt.Println(result)
 			return nil

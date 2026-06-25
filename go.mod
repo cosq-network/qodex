@@ -1,4 +1,4 @@
-module github.com/benoybose/locha
+module github.com/benoybose/qodex
 
 go 1.26
 

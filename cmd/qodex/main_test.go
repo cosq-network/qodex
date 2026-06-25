@@ -67,7 +67,7 @@ run_commands = "ask"
 network = "ask"
 
 [store]
-path = ".locha/locha.db"
+path = ".qodex/qodex.db"
 
 [agent]
 max_steps = 2

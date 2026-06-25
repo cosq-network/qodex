@@ -1,6 +1,6 @@
-# Locha
+# Qodex
 
-Locha is a local-first coding agent CLI written in Go. It uses a terminal UI with streaming token rendering, an OpenAI-compatible local model endpoint, and a single locally hosted Qwen Coder model by default.
+Qodex is a local-first coding agent CLI written in Go. It uses a terminal UI with streaming token rendering, an OpenAI-compatible local model endpoint, and a single locally hosted Qwen Coder model by default.
 
 The intended runtime is `llama.cpp`, not Ollama. Other OpenAI-compatible backends such as vLLM and SGLang can be supported as advanced runtime options without changing the agent core. Backend capability detection is performed at startup to enable streaming when supported.
 
@@ -64,15 +64,15 @@ Default model family: Qwen Coder instruct
 ## Build
 
 ```sh
-go build ./cmd/locha
+go build ./cmd/qodex
 ```
 
-This creates a local `./locha` binary.
+This creates a local `./qodex` binary.
 
 ## Runtime Shape
 
 ```text
-locha
+qodex
   -> TUI / CLI command
   -> agent loop
   -> context builder
@@ -97,7 +97,7 @@ llama-server \
   --ctx-size 32768
 ```
 
-Locha should then point at:
+Qodex should then point at:
 
 ```text
 http://127.0.0.1:8080/v1
@@ -108,20 +108,20 @@ The CLI should treat this as an OpenAI-compatible base URL and should not requir
 ## Quick Start
 
 ```sh
-./locha init
-./locha doctor
-./locha config list
-./locha run "Explain this repository structure"
-./locha chat
-./locha sessions list
-./locha sessions resume <id>
-./locha sessions export <id>
+./qodex init
+./qodex doctor
+./qodex config list
+./qodex run "Explain this repository structure"
+./qodex chat
+./qodex sessions list
+./qodex sessions resume <id>
+./qodex sessions export <id>
 ```
 
 For prompts that may write files or run commands:
 
 ```sh
-./locha --yes run "Run the tests and fix the failing issue"
+./qodex --yes run "Run the tests and fix the failing issue"
 ```
 
-Without `--yes`, the one-shot CLI asks before write, shell, and network tools. In chat mode, Locha shows approval requests inline with a diff preview; press `y` to approve or `n` to deny. Model responses are rendered token-by-token via SSE streaming when the backend supports it.
+Without `--yes`, the one-shot CLI asks before write, shell, and network tools. In chat mode, Qodex shows approval requests inline with a diff preview; press `y` to approve or `n` to deny. Model responses are rendered token-by-token via SSE streaming when the backend supports it.

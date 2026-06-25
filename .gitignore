@@ -1,4 +1,5 @@
+/qodex
 /locha
-/.locha/locha.db
-/.locha/locha.db-*
+/.qodex/*.db
+/.qodex/*.db-*
 

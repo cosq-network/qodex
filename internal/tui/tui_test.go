@@ -7,8 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/benoybose/locha/internal/agent"
-	"github.com/benoybose/locha/internal/store"
+	"github.com/benoybose/qodex/internal/agent"
+	"github.com/benoybose/qodex/internal/store"
 )
 
 func TestApprovalPromptAcceptsYes(t *testing.T) {
@@ -186,7 +186,7 @@ func TestExtractAutoQuery(t *testing.T) {
 }
 
 func TestFuzzyFind(t *testing.T) {
-	files := []string{"README.md", "internal/tui/tui.go", "internal/agent/agent.go", "cmd/locha/main.go"}
+	files := []string{"README.md", "internal/tui/tui.go", "internal/agent/agent.go", "cmd/qodex/main.go"}
 	tests := []struct {
 		query string
 		want  int

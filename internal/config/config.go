@@ -77,7 +77,7 @@ func Load(path string) (Config, error) {
 }
 
 func Defaults(projectRoot string) Config {
-	storePath := filepath.Join(projectRoot, ".locha", "locha.db")
+	storePath := filepath.Join(projectRoot, ".qodex", "qodex.db")
 	return Config{
 		ProjectRoot: projectRoot,
 		Model: ModelConfig{
@@ -107,8 +107,8 @@ func candidatePaths(cwd, explicit string) []string {
 	}
 	home, _ := os.UserHomeDir()
 	return []string{
-		filepath.Join(home, ".config", "locha", "config.toml"),
-		filepath.Join(cwd, ".locha", "config.toml"),
+		filepath.Join(home, ".config", "qodex", "config.toml"),
+		filepath.Join(cwd, ".qodex", "config.toml"),
 	}
 }
 
@@ -348,7 +348,7 @@ func (c Config) Get(key string) (string, bool) {
 }
 
 func ProjectConfigPath(projectRoot string) string {
-	return filepath.Join(projectRoot, ".locha", "config.toml")
+	return filepath.Join(projectRoot, ".qodex", "config.toml")
 }
 
 func SetProjectValue(projectRoot, key, value string) error {

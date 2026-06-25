@@ -7,11 +7,11 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/benoybose/locha/internal/config"
-	"github.com/benoybose/locha/internal/model"
-	"github.com/benoybose/locha/internal/skills"
-	"github.com/benoybose/locha/internal/store"
-	"github.com/benoybose/locha/internal/tools"
+	"github.com/benoybose/qodex/internal/config"
+	"github.com/benoybose/qodex/internal/model"
+	"github.com/benoybose/qodex/internal/skills"
+	"github.com/benoybose/qodex/internal/store"
+	"github.com/benoybose/qodex/internal/tools"
 )
 
 type PlanState struct {
@@ -275,7 +275,7 @@ func (a *Agent) selectSkills(userPrompt string) {
 
 func (a *Agent) systemPrompt(userPrompt string) string {
 	var b strings.Builder
-	b.WriteString("You are Locha, a local coding agent running on the user's machine.\n")
+	b.WriteString("You are Qodex, a local coding agent running on the user's machine.\n")
 	b.WriteString("You must not claim to have read, changed, or executed anything unless a tool result proves it.\n")
 	b.WriteString("When you need a tool, respond with exactly one JSON object and no Markdown:\n")
 	b.WriteString(`{"tool_call":{"name":"read_file","arguments":{"path":"README.md"}}}` + "\n")

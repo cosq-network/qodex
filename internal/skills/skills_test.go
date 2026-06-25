@@ -468,7 +468,7 @@ func TestRenderSlicedEmpty(t *testing.T) {
 
 func TestDiscoverWithSkillToml(t *testing.T) {
 	dir := t.TempDir()
-	skillDir := dir + "/.locha/skills/myskill"
+	skillDir := dir + "/.qodex/skills/myskill"
 	if err := os.MkdirAll(skillDir, 0755); err != nil {
 		t.Fatal(err)
 	}

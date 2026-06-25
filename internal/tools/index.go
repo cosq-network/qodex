@@ -78,7 +78,7 @@ func NewProjectIndex(root string) *ProjectIndex {
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "vendor" || d.Name() == ".locha" {
+			if d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "vendor" || d.Name() == ".qodex" {
 				return filepath.SkipDir
 			}
 			return nil

@@ -12,15 +12,15 @@ func TestLoadProjectConfigAndNormalizeStorePath(t *testing.T) {
 	restore := chdir(t, root)
 	defer restore()
 
-	if err := os.MkdirAll(filepath.Join(root, ".locha"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, ".qodex"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	err := os.WriteFile(filepath.Join(root, ".locha", "config.toml"), []byte(`[model]
+	err := os.WriteFile(filepath.Join(root, ".qodex", "config.toml"), []byte(`[model]
 base_url = "http://127.0.0.1:9000/v1"
 model = "qwen-test"
 
 [store]
-path = ".locha/test.db"
+path = ".qodex/test.db"
 `), 0o644)
 	if err != nil {
 		t.Fatal(err)
@@ -33,7 +33,7 @@ path = ".locha/test.db"
 	if cfg.Model.BaseURL != "http://127.0.0.1:9000/v1" {
 		t.Fatalf("base url = %q", cfg.Model.BaseURL)
 	}
-	wantStore := filepath.Join(root, ".locha", "test.db")
+	wantStore := filepath.Join(root, ".qodex", "test.db")
 	gotEval, _ := filepath.EvalSymlinks(filepath.Dir(cfg.Store.Path))
 	wantEval, _ := filepath.EvalSymlinks(filepath.Dir(wantStore))
 	if gotEval != wantEval || filepath.Base(cfg.Store.Path) != filepath.Base(wantStore) {
@@ -46,10 +46,10 @@ func TestLoadRejectsInvalidConfig(t *testing.T) {
 	restore := chdir(t, root)
 	defer restore()
 
-	if err := os.MkdirAll(filepath.Join(root, ".locha"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, ".qodex"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	err := os.WriteFile(filepath.Join(root, ".locha", "config.toml"), []byte(`[runtime]
+	err := os.WriteFile(filepath.Join(root, ".qodex", "config.toml"), []byte(`[runtime]
 temperature = 4
 `), 0o644)
 	if err != nil {
@@ -65,10 +65,10 @@ func TestLoadRejectsMalformedTOML(t *testing.T) {
 	restore := chdir(t, root)
 	defer restore()
 
-	if err := os.MkdirAll(filepath.Join(root, ".locha"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, ".qodex"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".locha", "config.toml"), []byte(`[runtime
+	if err := os.WriteFile(filepath.Join(root, ".qodex", "config.toml"), []byte(`[runtime
 temperature = 0.2
 `), 0o644); err != nil {
 		t.Fatal(err)
@@ -83,10 +83,10 @@ func TestLoadRejectsUnknownKey(t *testing.T) {
 	restore := chdir(t, root)
 	defer restore()
 
-	if err := os.MkdirAll(filepath.Join(root, ".locha"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, ".qodex"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".locha", "config.toml"), []byte(`[runtime]
+	if err := os.WriteFile(filepath.Join(root, ".qodex", "config.toml"), []byte(`[runtime]
 temperature = 0.2
 unknown = true
 `), 0o644); err != nil {

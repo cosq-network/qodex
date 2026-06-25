@@ -1,6 +1,6 @@
 # Roadmap
 
-This roadmap tracks technical activities for Locha as implementation phases. Status values are:
+This roadmap tracks technical activities for Qodex as implementation phases. Status values are:
 
 - `completed`: implemented and verified at MVP level.
 - `in-progress`: partially implemented, usable in limited form, or needing hardening.
@@ -8,7 +8,7 @@ This roadmap tracks technical activities for Locha as implementation phases. Sta
 
 ## Current Snapshot
 
-Locha has a working Go MVP with Cobra CLI commands, a Bubble Tea TUI with streaming token rendering and diff preview, OpenAI-compatible `llama.cpp` chat completions with SSE streaming support, prompt-based JSON tool calling, local tools, local skills, SQLite persistence, session resume with tool history reconstruction, context compaction, session export, error panel, and backend capability detection.
+Qodex has a working Go MVP with Cobra CLI commands, a Bubble Tea TUI with streaming token rendering and diff preview, OpenAI-compatible `llama.cpp` chat completions with SSE streaming support, prompt-based JSON tool calling, local tools, local skills, SQLite persistence, session resume with tool history reconstruction, context compaction, session export, error panel, and backend capability detection.
 
 ## Phase 0: Foundation MVP
 
@@ -16,12 +16,12 @@ Goal: establish a locally usable coding agent that can talk to `llama.cpp`, call
 
 | Status | Activity | Area | Notes |
 | --- | --- | --- | --- |
-| completed | Go module and package layout | Core | Uses `cmd/locha` and `internal/...` packages. |
+| completed | Go module and package layout | Core | Uses `cmd/qodex` and `internal/...` packages. |
 | completed | Cobra command structure | CLI | `init`, `run`, `chat`, `doctor`, `skills`, and `sessions` exist. |
-| completed | One-shot prompt command | CLI | `locha run "prompt"` executes the agent loop. |
-| completed | Terminal chat command | CLI/TUI | `locha chat` starts the Bubble Tea UI. |
-| completed | Project initializer | CLI/Config | `locha init` creates `.locha/config.toml` and a starter project skill. |
-| completed | Model diagnostics | CLI/Runtime | `locha doctor` checks config and `/v1/models` connectivity. |
+| completed | One-shot prompt command | CLI | `qodex run "prompt"` executes the agent loop. |
+| completed | Terminal chat command | CLI/TUI | `qodex chat` starts the Bubble Tea UI. |
+| completed | Project initializer | CLI/Config | `qodex init` creates `.qodex/config.toml` and a starter project skill. |
+| completed | Model diagnostics | CLI/Runtime | `qodex doctor` checks config and `/v1/models` connectivity. |
 | completed | OpenAI-compatible client | Runtime | Uses `/v1/chat/completions` and `/v1/models`. |
 | completed | llama.cpp-first configuration | Runtime | Defaults point to `http://127.0.0.1:8080/v1`. |
 | completed | Non-streaming chat completions | Runtime | Stable MVP behavior. |
@@ -39,19 +39,19 @@ Goal: establish a locally usable coding agent that can talk to `llama.cpp`, call
 | completed | `git_status` | Tools | Runs `git status --short`. |
 | completed | `git_diff` | Tools | Runs `git diff`. |
 | completed | Effect-based tool classification | Safety | Tools use `read`, `write`, and `shell` effects. |
-| completed | CLI approval prompt | Safety | `locha run` asks before write/shell tools unless `--yes`. |
+| completed | CLI approval prompt | Safety | `qodex run` asks before write/shell tools unless `--yes`. |
 | completed | Explicit auto-approval flag | Safety | `--yes` enables write/shell execution. |
 | completed | Basic Bubble Tea chat screen | TUI | Prompt input, scrollable history, and responses. |
 | completed | SQLite store | Persistence | Uses `modernc.org/sqlite`. |
 | completed | Session table | Persistence | Stores project root, title, model, backend, and timestamps. |
 | completed | Message table | Persistence | Stores user and assistant messages. |
 | completed | Tool call/result tables | Persistence | Stores tool requests and results. |
-| completed | Project-local DB default | Persistence | `.locha/locha.db`. |
-| completed | Project skill discovery | Skills | Loads `.locha/skills/<name>/SKILL.md`. |
-| completed | User skill discovery | Skills | Loads `~/.config/locha/skills/<name>/SKILL.md` when available. |
+| completed | Project-local DB default | Persistence | `.qodex/qodex.db`. |
+| completed | Project skill discovery | Skills | Loads `.qodex/skills/<name>/SKILL.md`. |
+| completed | User skill discovery | Skills | Loads `~/.config/qodex/skills/<name>/SKILL.md` when available. |
 | completed | Project skill override | Skills | Project skills override user skills with the same name. |
-| completed | Starter project skill | Skills | `locha init` creates `.locha/skills/project/SKILL.md`. |
-| completed | Local build | Packaging | `go build ./cmd/locha` produces `./locha`. |
+| completed | Starter project skill | Skills | `qodex init` creates `.qodex/skills/project/SKILL.md`. |
+| completed | Local build | Packaging | `go build ./cmd/qodex` produces `./qodex`. |
 | completed | Package tests run | Testing | `go test ./...` passes. |
 | completed | README | Docs | Project overview, stack, build, quick start. |
 | completed | Developer guide | Docs | Architecture and milestones. |
@@ -69,7 +69,7 @@ Goal: make the current MVP safer, easier to configure, and more reliable without
 | completed | TOML parsing | Config | Config files are decoded with a strict TOML parser. |
 | completed | Proper TOML parser | Config | Uses `github.com/pelletier/go-toml/v2` instead of the former line-based parser. |
 | completed | Config validation | Config | Validates backend, model URL, runtime bounds, agent steps, and approval values. |
-| completed | Config command | CLI/Config | `locha config get/set/list` exists. |
+| completed | Config command | CLI/Config | `qodex config get/set/list` exists. |
 | completed | Path safety | Safety/Tools | Project-root escape checks exist for file paths and patch paths, with adversarial tests. |
 | completed | Command safety | Safety/Tools | `run_command` supports direct `argv`, rejects high-risk direct commands, and keeps shell mode approval-gated. |
 | completed | Structured command execution | Safety/Tools | Direct argv execution exists and is documented as preferred. |
@@ -105,15 +105,15 @@ Goal: make longer coding sessions useful by reconstructing context correctly, co
 
 | Status | Activity | Area | Notes |
 | --- | --- | --- | --- |
-| completed | Session listing | Persistence/CLI | `locha sessions list`. |
-| completed | Session resume | Persistence/CLI | `locha sessions resume <id>` resumes in the TUI. |
+| completed | Session listing | Persistence/CLI | `qodex sessions list`. |
+| completed | Session resume | Persistence/CLI | `qodex sessions resume <id>` resumes in the TUI. |
 | completed | Session list and resume storage | Persistence | Resume loads prior messages. |
 | completed | Conversation reconstruction | Agent/Persistence | Resumed sessions load prior user/assistant messages and tool call history. |
 | completed | Tool history restoration | Persistence/Agent | Tool calls and results are loaded and summarized into model context on resume. |
 | completed | Context compaction | Agent | Automatically compacts conversation history when approaching context limit. |
 | completed | Better planning state | Agent | Track current task, files inspected, and actions taken explicitly via PlanState. |
-| completed | Non-interactive resume | CLI/Agent | Continue a prior session through `locha run --session <id>`. |
-| completed | Session export | Persistence/CLI | `locha sessions export <id>` outputs JSON transcript with tool events. |
+| completed | Non-interactive resume | CLI/Agent | Continue a prior session through `qodex run --session <id>`. |
+| completed | Session export | Persistence/CLI | `qodex sessions export <id>` outputs JSON transcript with tool events. |
 | completed | Approval persistence | Persistence/Safety | Store approval decisions as first-class DB rows via AddApproval. |
 | completed | Migrations package | Persistence | Version and apply schema changes safely via schema_version table. |
 
@@ -123,11 +123,11 @@ Goal: evolve skills from simple Markdown context into routable, budgeted, policy
 
 | Status | Activity | Area | Notes |
 | --- | --- | --- | --- |
-| completed | Skills inspection | CLI/Skills | `locha skills list` and `locha skills show <name>`. |
-| completed | Project skill discovery | Skills | Loads `.locha/skills/<name>/SKILL.md`. |
-| completed | User skill discovery | Skills | Loads `~/.config/locha/skills/<name>/SKILL.md` when available. |
+| completed | Skills inspection | CLI/Skills | `qodex skills list` and `qodex skills show <name>`. |
+| completed | Project skill discovery | Skills | Loads `.qodex/skills/<name>/SKILL.md`. |
+| completed | User skill discovery | Skills | Loads `~/.config/qodex/skills/<name>/SKILL.md` when available. |
 | completed | Project skill override | Skills | Project skills override user skills with the same name. |
-| completed | Starter project skill | Skills | `locha init` creates `.locha/skills/project/SKILL.md`. |
+| completed | Starter project skill | Skills | `qodex init` creates `.qodex/skills/project/SKILL.md`. |
 | completed | Skill selection | Skills/Agent | Keyword-based matching from headings and body content, project skill always included, `/skill <name>` explicit invocation. |
 | completed | `skill.toml` metadata | Skills | Add triggers, allowed tools, context budgets, and predefined scripts. |
 | completed | Model-assisted skill routing | Skills/Agent | Let the model choose from compact skill summaries via SelectViaModel, with heuristic fallback. Controlled by agent.skill_routing config (auto/model). |
@@ -147,7 +147,7 @@ Goal: add higher-signal development tools so the agent can inspect, test, format
 | completed | Test runner tool | Tools | Project-aware test command discovery and execution for go, pytest, and jest. |
 | completed | Formatter tool | Tools | Run formatter (go fmt, ruff, black, prettier) with approval and file scope. |
 | completed | Project index | Tools/Context | Maintain a lightweight file and symbol index with per-language regex extraction. |
-| completed | Review mode | Agent/Tools | Purpose-built `locha review` CLI command + `review_changes` tool for uncommitted change analysis. |
+| completed | Review mode | Agent/Tools | Purpose-built `qodex review` CLI command + `review_changes` tool for uncommitted change analysis. |
 
 ## Phase 6: Backend Expansion
 
@@ -169,7 +169,7 @@ Goal: turn the local MVP into a distributable developer tool with reliable build
 
 | Status | Activity | Area | Notes |
 | --- | --- | --- | --- |
-| planned | Version command | CLI/Packaging | Add `locha version` with commit/build metadata. |
+| planned | Version command | CLI/Packaging | Add `qodex version` with commit/build metadata. |
 | planned | Shell completions packaging | CLI/Packaging | Cobra can generate completions; install docs and release packaging are still needed. |
 | planned | Release builds | Packaging | Cross-platform binaries for macOS, Linux, and Windows. |
 | planned | Homebrew formula | Packaging | Useful for macOS users. |

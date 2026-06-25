@@ -8,7 +8,7 @@ import (
 
 func TestStoreSessionMessagesAndTools(t *testing.T) {
 	ctx := context.Background()
-	db, err := Open(filepath.Join(t.TempDir(), "locha.db"))
+	db, err := Open(filepath.Join(t.TempDir(), "qodex.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,8 +15,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/benoybose/locha/internal/agent"
-	"github.com/benoybose/locha/internal/store"
+	"github.com/benoybose/qodex/internal/agent"
+	"github.com/benoybose/qodex/internal/store"
 )
 
 type Model struct {
@@ -93,7 +93,7 @@ func NewWithHistoryAutoApproved(agent *agent.Agent, messages []store.Message) Mo
 func newModel(a *agent.Agent, messages []store.Message, autoApprove bool) Model {
 	ta := textarea.New()
 	ta.KeyMap.InsertNewline.SetKeys("ctrl+j", "alt+enter")
-	ta.Placeholder = "Ask Locha to inspect, explain, edit, or run tests...  (@ to reference files)"
+	ta.Placeholder = "Ask Qodex to inspect, explain, edit, or run tests...  (@ to reference files)"
 	ta.SetWidth(80)
 	ta.SetHeight(4)
 	ta.MaxHeight = 12
@@ -105,7 +105,7 @@ func newModel(a *agent.Agent, messages []store.Message, autoApprove bool) Model 
 
 	vp := viewport.New(80, 24)
 	history := []string{
-		headerStyle.Render("Locha"),
+		headerStyle.Render("Qodex"),
 		helpStyle.Render("Local coding agent. Enter submits. Ctrl+C quits. Approve tool requests with y or n."),
 	}
 	for _, msg := range messages {
@@ -113,7 +113,7 @@ func newModel(a *agent.Agent, messages []store.Message, autoApprove bool) Model 
 		case "user":
 			history = append(history, "", userStyle.Render("You:"), msg.Content)
 		case "assistant":
-			history = append(history, "", aiStyle.Render("Locha:"), msg.Content)
+			history = append(history, "", aiStyle.Render("Qodex:"), msg.Content)
 		}
 	}
 
@@ -239,7 +239,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.busy = true
 			m.lastErr = ""
 			m.streamBuffer.Reset()
-			m.history = append(m.history, "", userStyle.Render("You:"), prompt, "", aiStyle.Render("Locha:"), "")
+			m.history = append(m.history, "", userStyle.Render("You:"), prompt, "", aiStyle.Render("Qodex:"), "")
 			m.workingIndex = len(m.history) - 1
 			m.refresh()
 			return m, tea.Batch(
@@ -540,7 +540,7 @@ func listProjectFiles(root string) []string {
 		if err != nil || len(files) >= 2000 {
 			return err
 		}
-		if d.IsDir() && (d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "vendor" || d.Name() == ".locha") {
+		if d.IsDir() && (d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "vendor" || d.Name() == ".qodex") {
 			return filepath.SkipDir
 		}
 		if !d.IsDir() {

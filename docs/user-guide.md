@@ -1,10 +1,10 @@
 # User Guide
 
-Locha is a local terminal coding assistant. It runs against a locally hosted Qwen Coder model through `llama.cpp`.
+Qodex is a local terminal coding assistant. It runs against a locally hosted Qwen Coder model through `llama.cpp`.
 
 ## What You Need
 
-- A working Go-built `locha` binary.
+- A working Go-built `qodex` binary.
 - A `llama.cpp` server binary.
 - A local Qwen Coder GGUF model file.
 - A terminal with true color support.
@@ -42,26 +42,26 @@ The expected API base URL is:
 http://127.0.0.1:8080/v1
 ```
 
-Locha uses the OpenAI-compatible API exposed by `llama.cpp`.
+Qodex uses the OpenAI-compatible API exposed by `llama.cpp`.
 
-## Configure Locha
+## Configure Qodex
 
 Create starter project configuration and a project skill:
 
 ```sh
-locha init
+qodex init
 ```
 
 If you built locally from this repository, use:
 
 ```sh
-./locha init
+./qodex init
 ```
 
 Project-local config should live at:
 
 ```text
-.locha/config.toml
+.qodex/config.toml
 ```
 
 Example:
@@ -84,21 +84,21 @@ run_commands = "ask"
 network = "ask"
 
 [store]
-path = ".locha/locha.db"
+path = ".qodex/qodex.db"
 ```
 
 Inspect effective config:
 
 ```sh
-locha config list
-locha config get model.base_url
+qodex config list
+qodex config get model.base_url
 ```
 
 Update project-local config:
 
 ```sh
-locha config set runtime.temperature 0.1
-locha config set model.base_url http://127.0.0.1:8080/v1
+qodex config set runtime.temperature 0.1
+qodex config set model.base_url http://127.0.0.1:8080/v1
 ```
 
 ## Start A Chat Session
@@ -106,24 +106,24 @@ locha config set model.base_url http://127.0.0.1:8080/v1
 From a project directory:
 
 ```sh
-locha chat
+qodex chat
 ```
 
 For a one-shot prompt:
 
 ```sh
-locha run "Find the failing tests and suggest a fix"
+qodex run "Find the failing tests and suggest a fix"
 ```
 
-If you built locally from this repository, use `./locha` instead of `locha`.
+If you built locally from this repository, use `./qodex` instead of `qodex`.
 
 For prompts that need file writes or shell commands:
 
 ```sh
-locha --yes run "Run the Go tests and fix the failing test"
+qodex --yes run "Run the Go tests and fix the failing test"
 ```
 
-Without `--yes`, `locha run` asks before writes, shell commands, and network commands. In chat mode, Locha shows approval requests inline; press `y` to approve or `n` to deny.
+Without `--yes`, `qodex run` asks before writes, shell commands, and network commands. In chat mode, Qodex shows approval requests inline; press `y` to approve or `n` to deny.
 
 ## Common Prompts
 
@@ -149,7 +149,7 @@ Review my uncommitted changes.
 
 ## Tool Approvals
 
-Locha can ask to use tools. Read-only tools may run automatically. Riskier actions require approval.
+Qodex can ask to use tools. Read-only tools may run automatically. Riskier actions require approval.
 
 Usually automatic:
 
@@ -175,29 +175,29 @@ Review command text and file change details before approving them. A richer diff
 
 ## Skills
 
-Skills are local instruction bundles that teach Locha project or workflow conventions.
+Skills are local instruction bundles that teach Qodex project or workflow conventions.
 
 Project skills live in:
 
 ```text
-.locha/skills/
+.qodex/skills/
 ```
 
 User-wide skills live in:
 
 ```text
-~/.config/locha/skills/
+~/.config/qodex/skills/
 ```
 
 Example:
 
 ```text
-.locha/skills/go-testing/
+.qodex/skills/go-testing/
   skill.toml
   SKILL.md
 ```
 
-You can ask Locha to use a skill explicitly:
+You can ask Qodex to use a skill explicitly:
 
 ```text
 /skill go-testing
@@ -206,18 +206,18 @@ Run the failing tests and fix the issue.
 
 ## Sessions
 
-Locha keeps MVP session history in SQLite at `.locha/locha.db` by default. You can list and resume sessions.
+Qodex keeps MVP session history in SQLite at `.qodex/qodex.db` by default. You can list and resume sessions.
 
 Expected commands:
 
 ```sh
-locha sessions list
-locha sessions resume <id>
+qodex sessions list
+qodex sessions resume <id>
 ```
 
 ## Troubleshooting
 
-### Locha Cannot Connect To The Model
+### Qodex Cannot Connect To The Model
 
 Check that `llama.cpp` is running:
 
@@ -225,7 +225,7 @@ Check that `llama.cpp` is running:
 curl http://127.0.0.1:8080/v1/models
 ```
 
-Then verify `.locha/config.toml` has the same host and port.
+Then verify `.qodex/config.toml` has the same host and port.
 
 ### Responses Are Weak Or Confused
 
@@ -241,7 +241,7 @@ context_tokens = 32768
 
 ### Tool Calls Fail Often
 
-This can happen with smaller models. Locha should retry malformed tool calls, but model quality still matters. Use a larger Qwen Coder model or a backend with better structured-output behavior.
+This can happen with smaller models. Qodex should retry malformed tool calls, but model quality still matters. Use a larger Qwen Coder model or a backend with better structured-output behavior.
 
 ### The Agent Wants To Run A Risky Command
 

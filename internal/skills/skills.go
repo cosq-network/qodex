@@ -36,9 +36,9 @@ func Discover(projectRoot string) ([]Skill, error) {
 	var roots []string
 	home, _ := os.UserHomeDir()
 	if home != "" {
-		roots = append(roots, filepath.Join(home, ".config", "locha", "skills"))
+		roots = append(roots, filepath.Join(home, ".config", "qodex", "skills"))
 	}
-	roots = append(roots, filepath.Join(projectRoot, ".locha", "skills"))
+	roots = append(roots, filepath.Join(projectRoot, ".qodex", "skills"))
 
 	byName := map[string]Skill{}
 	for _, root := range roots {

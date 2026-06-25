@@ -12,11 +12,11 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/benoybose/locha/internal/config"
-	"github.com/benoybose/locha/internal/model"
-	"github.com/benoybose/locha/internal/skills"
-	"github.com/benoybose/locha/internal/store"
-	"github.com/benoybose/locha/internal/tools"
+	"github.com/benoybose/qodex/internal/config"
+	"github.com/benoybose/qodex/internal/model"
+	"github.com/benoybose/qodex/internal/skills"
+	"github.com/benoybose/qodex/internal/store"
+	"github.com/benoybose/qodex/internal/tools"
 )
 
 func TestParseToolCall(t *testing.T) {
@@ -60,13 +60,13 @@ func TestParseToolCallDetailedReportsInvalidToolJSON(t *testing.T) {
 
 func TestAgentLoopWithFakeModelServer(t *testing.T) {
 	root := t.TempDir()
-	db, err := store.Open(filepath.Join(root, "locha.db"))
+	db, err := store.Open(filepath.Join(root, "qodex.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
-	if err := writeTestFile(filepath.Join(root, "README.md"), "Locha test project\n"); err != nil {
+	if err := writeTestFile(filepath.Join(root, "README.md"), "Qodex test project\n"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -91,7 +91,7 @@ func TestAgentLoopWithFakeModelServer(t *testing.T) {
 			"choices": []map[string]interface{}{{
 				"message": map[string]string{
 					"role":    "assistant",
-					"content": "README says this is a Locha test project.",
+					"content": "README says this is a Qodex test project.",
 				},
 			}},
 		}), nil
@@ -112,7 +112,7 @@ func TestAgentLoopWithFakeModelServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, "Locha test project") {
+	if !strings.Contains(got, "Qodex test project") {
 		t.Fatalf("unexpected response: %q", got)
 	}
 	if chatCalls.Load() != 2 {
@@ -122,7 +122,7 @@ func TestAgentLoopWithFakeModelServer(t *testing.T) {
 
 func TestAgentClassifiesNetworkCommandForApproval(t *testing.T) {
 	root := t.TempDir()
-	db, err := store.Open(filepath.Join(root, "locha.db"))
+	db, err := store.Open(filepath.Join(root, "qodex.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestAgentClassifiesNetworkCommandForApproval(t *testing.T) {
 
 func TestAgentEmitsToolAndApprovalEvents(t *testing.T) {
 	root := t.TempDir()
-	db, err := store.Open(filepath.Join(root, "locha.db"))
+	db, err := store.Open(filepath.Join(root, "qodex.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestAgentEmitsToolAndApprovalEvents(t *testing.T) {
 
 func TestExecuteScriptRunsPreApprovedScript(t *testing.T) {
 	root := t.TempDir()
-	db, err := store.Open(filepath.Join(root, "locha.db"))
+	db, err := store.Open(filepath.Join(root, "qodex.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestExecuteScriptRunsPreApprovedScript(t *testing.T) {
 
 func TestExecuteScriptRejectsUnknownDescription(t *testing.T) {
 	root := t.TempDir()
-	db, err := store.Open(filepath.Join(root, "locha.db"))
+	db, err := store.Open(filepath.Join(root, "qodex.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func TestExecuteScriptRejectsUnknownDescription(t *testing.T) {
 
 func TestExecuteScriptRejectsNoDescription(t *testing.T) {
 	root := t.TempDir()
-	db, err := store.Open(filepath.Join(root, "locha.db"))
+	db, err := store.Open(filepath.Join(root, "qodex.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
