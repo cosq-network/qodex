@@ -204,11 +204,23 @@ func TestChatStreamHTTPError(t *testing.T) {
 
 func TestDetectCapabilitiesStreaming(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/models" {
+		if r.URL.Path != "/chat/completions" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
+		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{"data": []string{}})
+		data, _ := json.Marshal(streamChunk{
+			Choices: []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			}{
+				{Delta: struct {
+					Content string `json:"content"`
+				}{Content: "hello"}},
+			},
+		})
+		fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", data)
 	}))
 	defer srv.Close()
 
@@ -222,7 +234,11 @@ func TestDetectCapabilitiesStreaming(t *testing.T) {
 
 func TestDetectCapabilitiesNoStreaming(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(chatResponse{Choices: []struct {
+			Message Message `json:"message"`
+		}{}})
 	}))
 	defer srv.Close()
 
@@ -242,6 +258,36 @@ func TestDetectCapabilitiesConnectionRefused(t *testing.T) {
 	caps := c.DetectCapabilities(ctx)
 	if caps.Streaming {
 		t.Fatal("expected no streaming capability on connection error")
+	}
+}
+
+func TestDetectCapabilitiesNonStreamingResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-model")
+	ctx := context.Background()
+	caps := c.DetectCapabilities(ctx)
+	if caps.Streaming {
+		t.Fatal("expected no streaming for non-streaming response")
+	}
+}
+
+func TestDetectCapabilitiesHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-model")
+	ctx := context.Background()
+	caps := c.DetectCapabilities(ctx)
+	if caps.Streaming {
+		t.Fatal("expected no streaming on HTTP error")
 	}
 }
 

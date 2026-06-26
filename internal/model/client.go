@@ -117,19 +117,53 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, temperature
 
 func (c *Client) DetectCapabilities(ctx context.Context) Capabilities {
 	caps := Capabilities{}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/models", nil)
+
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	reqBody := chatRequest{
+		Model:    c.Model,
+		Messages: []Message{{Role: "user", Content: "hi"}},
+		Stream:   true,
+	}
+	raw, err := json.Marshal(reqBody)
 	if err != nil {
 		return caps
 	}
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodPost, c.BaseURL+"/chat/completions", bytes.NewReader(raw))
+	if err != nil {
+		return caps
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return caps
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode >= 300 {
 		return caps
 	}
-	caps.Streaming = true
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			caps.Streaming = true
+			return caps
+		}
+		var chunk streamChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err == nil && len(chunk.Choices) > 0 {
+			caps.Streaming = true
+			return caps
+		}
+	}
 	return caps
 }
 

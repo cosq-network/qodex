@@ -12,7 +12,7 @@ The repository includes a fully featured coding agent with:
 - Bubble Tea terminal chat UI with streaming token rendering, inline diff preview, spinner, error panel, and multi-line input with `@` file autocomplete.
 - OpenAI-compatible `/v1/chat/completions` client with SSE streaming and capability detection.
 - Prompt-based JSON tool calling with validation repair loop.
-- Built-in tools: `list_files`, `read_file`, `search_text`, `write_file`, `write_patch`, `run_command`, `git_status`, `git_diff`, and `run_script` (pre-approved skill scripts).
+- Built-in tools: `list_files`, `read_file`, `search_text`, `write_file`, `write_patch`, `run_command`, `git_status`, `git_diff`, `run_script` (pre-approved skill scripts), `run_tests`, `run_formatter`, `review_changes`, `project_index`, `lsp_diagnostics`, `lsp_definition`, and `lsp_find_references`.
 - Skill system: `skill.toml` metadata (triggers, allowed_tools, context_budget, scripts), model-assisted skill routing (`agent.skill_routing`), keyword/heuristic selection, section-aware context slicing, and pre-approved script policy with provenance tracking.
 - SQLite session/tool event storage with WAL mode, migrations, and approval persistence.
 - Session resume with full tool history reconstruction (TUI and non-interactive via `--session`).

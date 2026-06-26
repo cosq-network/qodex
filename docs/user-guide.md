@@ -101,6 +101,27 @@ qodex config set runtime.temperature 0.1
 qodex config set model.base_url http://127.0.0.1:8080/v1
 ```
 
+## LSP Tools (Diagnostics, Definitions, References)
+
+Qodex ships with three language-server-powered tools that provide precise code analysis. They communicate with a running LSP server (e.g. `gopls`) over JSON-RPC 2.0 via stdio.
+
+| Tool | Description |
+|------|-------------|
+| `lsp_diagnostics` | Get errors, warnings, and hints for a file. Accepts `path`. |
+| `lsp_definition` | Go to the definition of a symbol. Accepts `path`, `line`, `character`. |
+| `lsp_find_references` | Find all references to a symbol. Accepts `path`, `line`, `character`. |
+
+### Supported LSP Servers
+
+| Language | Server | Install |
+|----------|--------|---------|
+| Go | `gopls` | `go install golang.org/x/tools/gopls@latest` |
+| Python | `pyright-langserver` | `pip install pyright` or `npm install -g pyright` |
+| JavaScript / TypeScript | `typescript-language-server` | `npm install -g typescript-language-server` |
+| Rust | `rust-analyzer` | `rustup component add rust-analyzer` |
+
+If the LSP server is not installed, Qodex returns a clear error with installation instructions. The tools are marked as `read` effect and do not require approval.
+
 ## Start A Chat Session
 
 From a project directory:
@@ -159,6 +180,8 @@ read files
 search text
 git status
 git diff
+project index queries
+LSP diagnostics, definitions, and references
 ```
 
 Usually requires approval:

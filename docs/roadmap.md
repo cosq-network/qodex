@@ -142,8 +142,8 @@ Goal: add higher-signal development tools so the agent can inspect, test, format
 | --- | --- | --- | --- |
 | completed | Diff preview | Tools/TUI | Show patch/file changes before approval via inline diff rendering. |
 | completed | Tool output artifacts | Tools/Persistence | Persist large raw outputs and send summaries to the model via output_artifacts DB table. |
-| planned | LSP diagnostics | Tools | Add language-server diagnostics tool. |
-| planned | LSP definition/references | Tools | Add navigation tools for supported languages. |
+| completed | LSP diagnostics | Tools | Add language-server diagnostics tool via JSON-RPC 2.0 client. |
+| completed | LSP definition/references | Tools | Add navigation tools for supported languages. |
 | completed | Test runner tool | Tools | Project-aware test command discovery and execution for go, pytest, and jest. |
 | completed | Formatter tool | Tools | Run formatter (go fmt, ruff, black, prettier) with approval and file scope. |
 | completed | Project index | Tools/Context | Maintain a lightweight file and symbol index with per-language regex extraction. |

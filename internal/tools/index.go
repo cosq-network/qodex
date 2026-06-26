@@ -40,7 +40,7 @@ var funcRe = map[string]*regexp.Regexp{
 	"js":  regexp.MustCompile(`^(function|class|const|let|var)\s+(\w+)`),
 	"ts":  regexp.MustCompile(`^(function|class|const|let|var|interface|type|enum)\s+(\w+)`),
 	"rs":  regexp.MustCompile(`^(fn|struct|enum|trait|impl|type|const)\s+(\w+)`),
-	"java": regexp.MustCompile(`^\s*(public|private|protected)?\s*(class|interface|enum|record)\s+(\w+)`),
+	"java": regexp.MustCompile(`^\s*(?:public|private|protected)?\s*(class|interface|enum|record)\s+(\w+)`),
 }
 
 func langFromExt(path string) string {

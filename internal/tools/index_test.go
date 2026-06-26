@@ -107,3 +107,25 @@ func TestProjectIndexConcurrentAccess(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestProjectIndexJavaSymbols(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "Example.java"), []byte("public class Example {}\nclass Internal {}\nprivate record Data(int x) {}\n"), 0o644)
+
+	idx := NewProjectIndex(root)
+
+	syms := idx.QuerySymbols("Example", "", "", 10)
+	if len(syms) != 1 || syms[0].Name != "Example" || syms[0].Kind != "class" {
+		t.Fatalf("expected class Example, got %v", syms)
+	}
+
+	syms = idx.QuerySymbols("Internal", "", "", 10)
+	if len(syms) != 1 || syms[0].Name != "Internal" || syms[0].Kind != "class" {
+		t.Fatalf("expected class Internal, got %v", syms)
+	}
+
+	syms = idx.QuerySymbols("Data", "", "", 10)
+	if len(syms) != 1 || syms[0].Name != "Data" || syms[0].Kind != "record" {
+		t.Fatalf("expected record Data, got %v", syms)
+	}
+}

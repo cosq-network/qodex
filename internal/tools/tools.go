@@ -51,6 +51,9 @@ func NewRegistry(projectRoot string) *Registry {
 	r.add("run_tests", "Discover and run tests. Accepts pattern (package path or test name regex), file (specific test file), or framework hint (go, pytest, jest, etc.). Returns test output and summary.", "shell", r.runTests)
 	r.add("run_formatter", "Run a code formatter on the project or specific files. Accepts tool (go, ruff, prettier, black, etc.) and path. Requires approval.", "shell", r.runFormatter)
 	r.add("review_changes", "Analyze uncommitted git changes. Accepts scope (working, staged, or all). Returns structured review of diffs with potential issues and suggestions.", "read", r.reviewChanges)
+	r.add("lsp_diagnostics", "Run an LSP language server to get diagnostics (errors, warnings, hints) for a file. Accepts path to a source file. Requires a compatible LSP server (gopls, pyright, etc.) to be installed.", "read", r.lspDiagnostics)
+	r.add("lsp_definition", "Go to the definition of a symbol at a given file, line, and column. Accepts path, line (1-based), and character (1-based). Returns the file, line, and column of the definition.", "read", r.lspDefinition)
+	r.add("lsp_find_references", "Find all references to a symbol at a given file, line, and column. Accepts path, line (1-based), and character (1-based). Returns a list of file:line:col locations.", "read", r.lspFindReferences)
 	return r
 }
 
