@@ -951,6 +951,8 @@ func (r *Registry) reviewChanges(ctx context.Context, raw json.RawMessage) (Resu
 		cmd2 = exec.CommandContext(cctx, "git", "diff", "--staged", "--name-status")
 	} else if args.Scope == "working" {
 		cmd2 = exec.CommandContext(cctx, "git", "diff", "--name-status")
+	} else {
+		cmd2 = exec.CommandContext(cctx, "git", "diff", "HEAD", "--name-status")
 	}
 	cmd2.Dir = r.root
 	statusOut, _ := cmd2.CombinedOutput()

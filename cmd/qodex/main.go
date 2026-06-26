@@ -54,10 +54,6 @@ func rootCmd() *cobra.Command {
 	return cmd
 }
 
-func needsConfig() []string {
-	return []string{"run", "chat", "review", "sessions resume"}
-}
-
 func configCmd(cfgPath *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
@@ -129,9 +125,9 @@ func initCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			lochaDir := filepath.Join(cwd, ".qodex")
-			configPath := filepath.Join(lochaDir, "config.toml")
-			skillDir := filepath.Join(lochaDir, "skills", "project")
+			qodexDir := filepath.Join(cwd, ".qodex")
+			configPath := filepath.Join(qodexDir, "config.toml")
+			skillDir := filepath.Join(qodexDir, "skills", "project")
 			skillPath := filepath.Join(skillDir, "SKILL.md")
 
 			if err := os.MkdirAll(skillDir, 0o755); err != nil {
