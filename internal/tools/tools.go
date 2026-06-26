@@ -11,14 +11,17 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 	"sync"
+	"time"
+
+	"github.com/benoybose/qodex/internal/model"
 )
 
 type Tool struct {
 	Name        string
 	Description string
 	Effect      string
+	Parameters  json.RawMessage // JSON Schema for native OpenAI tool calls
 	Execute     func(context.Context, json.RawMessage) (Result, error)
 }
 
@@ -57,8 +60,35 @@ func NewRegistry(projectRoot string) *Registry {
 	return r
 }
 
+var defaultParamSchema = json.RawMessage(`{"type":"object"}`)
+
 func (r *Registry) add(name, desc, effect string, fn func(context.Context, json.RawMessage) (Result, error)) {
-	r.tools[name] = Tool{Name: name, Description: desc, Effect: effect, Execute: fn}
+	r.tools[name] = Tool{
+		Name: name, Description: desc, Effect: effect,
+		Parameters: defaultParamSchema,
+		Execute:    fn,
+	}
+}
+
+func (r *Registry) ToolSchemas() []model.ToolSchema {
+	names := make([]string, 0, len(r.tools))
+	for name := range r.tools {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]model.ToolSchema, 0, len(names))
+	for _, name := range names {
+		t := r.tools[name]
+		out = append(out, model.ToolSchema{
+			Type: "function",
+			Function: model.ToolFunction{
+				Name:        t.Name,
+				Description: t.Description,
+				Parameters:  t.Parameters,
+			},
+		})
+	}
+	return out
 }
 
 func (r *Registry) Get(name string) (Tool, bool) {

@@ -1,0 +1,9 @@
+{
+  "name": "qodex",
+  "desc": "Qodex CLI",
+  "homepage": "https://github.com/cosq-network/qode",
+  "versions": {
+    "stable": "0.1.0"
+  },
+  "license": "MIT"
+}

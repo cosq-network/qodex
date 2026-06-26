@@ -1,0 +1,23 @@
+[model]
+provider = "openai-compatible"
+base_url = "http://127.0.0.1:30000/v1"
+model = "Qwen/Qwen2.5-Coder-7B-Instruct"
+
+[runtime]
+backend = "sglang"
+context_tokens = 32768
+temperature = 0.2
+top_p = 0.95
+
+[approval]
+write_files = "ask"
+run_commands = "ask"
+network = "ask"
+
+[store]
+path = ".qodex/qodex.db"
+
+[agent]
+max_steps = 12
+skill_routing = "auto"
+tool_calls = "prompt"

@@ -72,9 +72,7 @@ func TestChatSuccess(t *testing.T) {
 			t.Fatalf("model = %q", req.Model)
 		}
 		resp := chatResponse{
-			Choices: []struct {
-				Message Message `json:"message"`
-			}{
+			Choices: []chatResponseChoice{
 				{Message: Message{Role: "assistant", Content: "Hello!"}},
 			},
 		}
@@ -114,9 +112,7 @@ func TestChatErrorStatus(t *testing.T) {
 
 func TestChatNoChoices(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := chatResponse{Choices: []struct {
-			Message Message `json:"message"`
-		}{}}
+		resp := chatResponse{Choices: []chatResponseChoice{}}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
@@ -236,9 +232,7 @@ func TestDetectCapabilitiesNoStreaming(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(chatResponse{Choices: []struct {
-			Message Message `json:"message"`
-		}{}})
+		json.NewEncoder(w).Encode(chatResponse{Choices: []chatResponseChoice{}})
 	}))
 	defer srv.Close()
 
@@ -359,5 +353,113 @@ func TestChatStreamCancelledContext(t *testing.T) {
 	}
 	if got.String() != "partial " {
 		t.Fatalf("got %q, want %q", got.String(), "partial ")
+	}
+}
+
+func TestChatWithToolsContentOnly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req chatRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if len(req.Tools) == 0 {
+			t.Fatal("expected tools in request")
+		}
+		if req.Tools[0].Type != "function" {
+			t.Fatalf("tool[0].type = %q", req.Tools[0].Type)
+		}
+		resp := chatResponse{
+			Choices: []chatResponseChoice{
+				{Message: Message{Role: "assistant", Content: "I found the answer."}},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-model")
+	ctx := context.Background()
+	tools := []ToolSchema{{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "read_file",
+			Description: "Read a file",
+			Parameters:  json.RawMessage(`{"type":"object"}`),
+		},
+	}}
+	res, err := c.ChatWithTools(ctx, []Message{{Role: "user", Content: "hi"}}, 0.7, 0.9, tools)
+	if err != nil {
+		t.Fatalf("ChatWithTools: %v", err)
+	}
+	if res.Content != "I found the answer." {
+		t.Fatalf("content = %q", res.Content)
+	}
+	if len(res.ToolCalls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(res.ToolCalls))
+	}
+}
+
+func TestChatWithToolsToolCall(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := chatResponse{
+			Choices: []chatResponseChoice{{
+				FinishReason: "tool_calls",
+				Message: Message{
+					Role: "assistant",
+					ToolCalls: []ToolCall{{
+						ID:   "call_abc123",
+						Type: "function",
+						Function: ToolCallFunction{
+							Name:      "read_file",
+							Arguments: json.RawMessage(`{"path":"README.md"}`),
+						},
+					}},
+				},
+			}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-model")
+	ctx := context.Background()
+	tools := []ToolSchema{{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "read_file",
+			Description: "Read a file",
+			Parameters:  json.RawMessage(`{"type":"object"}`),
+		},
+	}}
+	res, err := c.ChatWithTools(ctx, []Message{{Role: "user", Content: "read readme"}}, 0.7, 0.9, tools)
+	if err != nil {
+		t.Fatalf("ChatWithTools: %v", err)
+	}
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(res.ToolCalls))
+	}
+	tc := res.ToolCalls[0]
+	if tc.Function.Name != "read_file" {
+		t.Fatalf("tool name = %q", tc.Function.Name)
+	}
+	if string(tc.Function.Arguments) != `{"path":"README.md"}` {
+		t.Fatalf("arguments = %s", string(tc.Function.Arguments))
+	}
+}
+
+func TestChatWithToolsHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte("upstream error"))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-model")
+	ctx := context.Background()
+	_, err := c.ChatWithTools(ctx, []Message{{Role: "user", Content: "hi"}}, 0.7, 0.9, nil)
+	if err == nil {
+		t.Fatal("expected error")
 	}
 }

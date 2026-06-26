@@ -129,3 +129,30 @@ func TestProjectIndexJavaSymbols(t *testing.T) {
 		t.Fatalf("expected record Data, got %v", syms)
 	}
 }
+
+func TestToolSchemas(t *testing.T) {
+	r := NewRegistry(t.TempDir())
+	schemas := r.ToolSchemas()
+	if len(schemas) == 0 {
+		t.Fatal("expected at least one tool schema")
+	}
+	names := make(map[string]bool)
+	for _, s := range schemas {
+		if s.Type != "function" {
+			t.Fatalf("schema type = %q, want function", s.Type)
+		}
+		if s.Function.Name == "" {
+			t.Fatal("expected non-empty name")
+		}
+		if s.Function.Description == "" {
+			t.Fatalf("expected non-empty description for %s", s.Function.Name)
+		}
+		if s.Function.Parameters == nil {
+			t.Fatalf("expected parameters for %s", s.Function.Name)
+		}
+		names[s.Function.Name] = true
+	}
+	if !names["list_files"] {
+		t.Fatal("expected list_files in tool schemas")
+	}
+}

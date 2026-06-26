@@ -120,6 +120,79 @@ func TestAgentLoopWithFakeModelServer(t *testing.T) {
 	}
 }
 
+func TestAgentLoopWithNativeToolCalls(t *testing.T) {
+	root := t.TempDir()
+	db, err := store.Open(filepath.Join(root, "qodex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := writeTestFile(filepath.Join(root, "README.md"), "Qodex test project\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	var chatCalls atomic.Int32
+	client := model.NewClient("http://fake.local/v1", "fake")
+	client.HTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/v1/chat/completions" {
+			return response(404, `{"error":"not found"}`), nil
+		}
+		chatCalls.Add(1)
+		if chatCalls.Load() == 1 {
+			return jsonResponse(map[string]interface{}{
+				"choices": []map[string]interface{}{{
+					"index": 0,
+					"message": map[string]interface{}{
+						"role":    "assistant",
+						"content": "",
+						"tool_calls": []map[string]interface{}{{
+							"id":   "call_001",
+							"type": "function",
+							"function": map[string]interface{}{
+								"name":      "read_file",
+								"arguments": `{"path":"README.md"}`,
+							},
+						}},
+					},
+					"finish_reason": "tool_calls",
+				}},
+			}), nil
+		}
+		return jsonResponse(map[string]interface{}{
+			"choices": []map[string]interface{}{{
+				"message": map[string]string{
+					"role":    "assistant",
+					"content": "README says this is a Qodex test project.",
+				},
+			}},
+		}), nil
+	})}
+
+	cfg := config.Defaults(root)
+	cfg.Model.BaseURL = "http://fake.local/v1"
+	cfg.Agent.ToolCalls = "native"
+	agent := New(Options{
+		Config:    cfg,
+		Client:    client,
+		Tools:     tools.NewRegistry(root),
+		Store:     db,
+		Approver:  ApproverFunc(func(ApprovalRequest) bool { return true }),
+		MaxSteps:  4,
+		SessionID: 0,
+	})
+	got, err := agent.Run(context.Background(), "read the README")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "Qodex test project") {
+		t.Fatalf("unexpected response: %q", got)
+	}
+	if chatCalls.Load() != 2 {
+		t.Fatalf("chat calls = %d, want 2", chatCalls.Load())
+	}
+}
+
 func TestAgentClassifiesNetworkCommandForApproval(t *testing.T) {
 	root := t.TempDir()
 	db, err := store.Open(filepath.Join(root, "qodex.db"))

@@ -2,4 +2,6 @@
 /locha
 /.qodex/*.db
 /.qodex/*.db-*
+/build/
+/dist/
 

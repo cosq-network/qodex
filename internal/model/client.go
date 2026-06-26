@@ -13,8 +13,37 @@ import (
 )
 
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+}
+
+type ToolCall struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function ToolCallFunction `json:"function"`
+}
+
+type ToolCallFunction struct {
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"`
+}
+
+type ToolSchema struct {
+	Type     string       `json:"type"`
+	Function ToolFunction `json:"function"`
+}
+
+type ToolFunction struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  json.RawMessage `json:"parameters"`
+}
+
+type ResponseMessage struct {
+	Content   string     `json:"content"`
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 }
 
 type Client struct {
@@ -98,8 +127,9 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, temperature
 				continue
 			}
 			if len(chunk.Choices) > 0 {
+				content := chunk.Choices[0].Delta.Content
 				select {
-				case ch <- StreamResult{Content: chunk.Choices[0].Delta.Content}:
+				case ch <- StreamResult{Content: content}:
 				case <-ctx.Done():
 					return
 				}
@@ -168,44 +198,62 @@ func (c *Client) DetectCapabilities(ctx context.Context) Capabilities {
 }
 
 func (c *Client) Chat(ctx context.Context, messages []Message, temperature, topP float64) (string, error) {
+	res, err := c.chatWithTools(ctx, messages, temperature, topP, nil)
+	if err != nil {
+		return "", err
+	}
+	return res.Content, nil
+}
+
+func (c *Client) ChatWithTools(ctx context.Context, messages []Message, temperature, topP float64, tools []ToolSchema) (*ResponseMessage, error) {
+	return c.chatWithTools(ctx, messages, temperature, topP, tools)
+}
+
+func (c *Client) chatWithTools(ctx context.Context, messages []Message, temperature, topP float64, tools []ToolSchema) (*ResponseMessage, error) {
 	reqBody := chatRequest{
 		Model:       c.Model,
 		Messages:    messages,
 		Temperature: temperature,
 		TopP:        topP,
 		Stream:      false,
+		Tools:       tools,
 	}
 	raw, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat/completions", bytes.NewReader(raw))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if resp.StatusCode >= 300 {
-		return "", fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var out chatResponse
 	if err := json.Unmarshal(body, &out); err != nil {
-		return "", err
+		return nil, err
 	}
 	if len(out.Choices) == 0 {
-		return "", fmt.Errorf("model returned no choices")
+		return nil, fmt.Errorf("model returned no choices")
 	}
-	return out.Choices[0].Message.Content, nil
+	choice := out.Choices[0]
+	res := &ResponseMessage{
+		Content:   choice.Message.Content,
+		ToolCalls: choice.Message.ToolCalls,
+	}
+	return res, nil
 }
 
 type StreamResult struct {
@@ -218,17 +266,22 @@ type Capabilities struct {
 }
 
 type chatRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	Temperature float64   `json:"temperature"`
-	TopP        float64   `json:"top_p"`
-	Stream      bool      `json:"stream"`
+	Model       string         `json:"model"`
+	Messages    []Message      `json:"messages"`
+	Temperature float64        `json:"temperature"`
+	TopP        float64        `json:"top_p"`
+	Stream      bool           `json:"stream"`
+	Tools       []ToolSchema   `json:"tools,omitempty"`
+}
+
+type chatResponseChoice struct {
+	Index        int      `json:"index"`
+	Message      Message  `json:"message"`
+	FinishReason string   `json:"finish_reason"`
 }
 
 type chatResponse struct {
-	Choices []struct {
-		Message Message `json:"message"`
-	} `json:"choices"`
+	Choices []chatResponseChoice `json:"choices"`
 }
 
 type streamChunk struct {

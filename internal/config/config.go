@@ -47,6 +47,7 @@ type StoreConfig struct {
 type AgentConfig struct {
 	MaxSteps     int
 	SkillRouting string
+	ToolCalls    string // "prompt" (default) or "native"
 }
 
 func Load(path string) (Config, error) {
@@ -97,7 +98,7 @@ func Defaults(projectRoot string) Config {
 			Network:     "ask",
 		},
 		Store: StoreConfig{Path: storePath},
-		Agent: AgentConfig{MaxSteps: 12, SkillRouting: "auto"},
+		Agent: AgentConfig{MaxSteps: 12, SkillRouting: "auto", ToolCalls: "prompt"},
 	}
 }
 
@@ -162,6 +163,7 @@ type fileStoreConfig struct {
 type fileAgentConfig struct {
 	MaxSteps     *int    `toml:"max_steps"`
 	SkillRouting *string `toml:"skill_routing"`
+	ToolCalls    *string `toml:"tool_calls"`
 }
 
 func (f fileConfig) mergeInto(cfg *Config) {
@@ -207,6 +209,9 @@ func (f fileConfig) mergeInto(cfg *Config) {
 	if f.Agent.SkillRouting != nil {
 		cfg.Agent.SkillRouting = *f.Agent.SkillRouting
 	}
+	if f.Agent.ToolCalls != nil {
+		cfg.Agent.ToolCalls = *f.Agent.ToolCalls
+	}
 }
 
 func apply(cfg *Config, section, key, val string) {
@@ -239,6 +244,8 @@ func apply(cfg *Config, section, key, val string) {
 		cfg.Agent.MaxSteps = intVal(val, cfg.Agent.MaxSteps)
 	case "agent.skill_routing":
 		cfg.Agent.SkillRouting = val
+	case "agent.tool_calls":
+		cfg.Agent.ToolCalls = val
 	}
 }
 
@@ -311,6 +318,9 @@ func (c Config) Validate() error {
 	if c.Agent.SkillRouting != "auto" && c.Agent.SkillRouting != "model" {
 		return fmt.Errorf("agent.skill_routing must be auto or model")
 	}
+	if c.Agent.ToolCalls != "prompt" && c.Agent.ToolCalls != "native" {
+		return fmt.Errorf("agent.tool_calls must be prompt or native")
+	}
 	for key, value := range map[string]string{
 		"approval.write_files":  c.Approval.WriteFiles,
 		"approval.run_commands": c.Approval.RunCommands,
@@ -339,6 +349,7 @@ func (c Config) Values() map[string]string {
 		"store.path":             c.Store.Path,
 		"agent.max_steps":        strconv.Itoa(c.Agent.MaxSteps),
 		"agent.skill_routing":    c.Agent.SkillRouting,
+		"agent.tool_calls":       c.Agent.ToolCalls,
 	}
 }
 

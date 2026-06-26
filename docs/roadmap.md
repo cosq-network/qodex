@@ -156,12 +156,12 @@ Goal: keep `llama.cpp` as the primary runtime while supporting other OpenAI-comp
 | Status | Activity | Area | Notes |
 | --- | --- | --- | --- |
 | completed | llama.cpp-first runtime | Runtime | Primary documented and default backend. |
-| planned | vLLM endpoint profile | Runtime | Same OpenAI-compatible abstraction, with documented config. |
-| planned | SGLang endpoint profile | Runtime | Same OpenAI-compatible abstraction, with documented config. |
-| planned | Native tool-call parsing | Runtime/Agent | Use native OpenAI-compatible tool calls when backend/model supports them reliably. |
+| completed | vLLM endpoint profile | Runtime | Same OpenAI-compatible abstraction, with documented config and example. |
+| completed | SGLang endpoint profile | Runtime | Same OpenAI-compatible abstraction, with documented config and example. |
+| completed | Native tool-call parsing | Runtime/Agent | Use native OpenAI-compatible tool calls when backend/model supports them reliably. |
 | completed | Backend capability detection | Runtime | Detect streaming support and model availability at startup. |
-| planned | Example configs | Docs/Runtime | llama.cpp, vLLM, and SGLang profiles. |
-| planned | llama.cpp model setup guide | Docs/Runtime | Recommended Qwen GGUF variants and server flags. |
+| completed | Example configs | Docs/Runtime | llama.cpp, vLLM, and SGLang profiles. |
+| completed | llama.cpp model setup guide | Docs/Runtime | Recommended Qwen GGUF variants and server flags. |
 
 ## Phase 7: Release Readiness
 
@@ -169,14 +169,14 @@ Goal: turn the local MVP into a distributable developer tool with reliable build
 
 | Status | Activity | Area | Notes |
 | --- | --- | --- | --- |
-| planned | Version command | CLI/Packaging | Add `qodex version` with commit/build metadata. |
-| planned | Shell completions packaging | CLI/Packaging | Cobra can generate completions; install docs and release packaging are still needed. |
-| planned | Release builds | Packaging | Cross-platform binaries for macOS, Linux, and Windows. |
-| planned | Homebrew formula | Packaging | Useful for macOS users. |
-| planned | Install script | Packaging | Optional convenience installer. |
-| planned | Contributor guide | Docs | Coding standards, tests, release workflow. |
-| planned | CI workflow | Testing/Packaging | Run tests and release checks on pushes and tags. |
-| planned | Signed releases | Packaging | Optional, after release process stabilizes. |
+| completed | Version command | CLI/Packaging | `qodex version` prints version, commit hash, and build timestamp. |
+| completed | Shell completions | CLI/Packaging | `qodex completion bash/zsh/fish/powershell` generates shell completions. |
+| completed | Release builds | Packaging | Cross-platform GoReleaser config targeting macOS, Linux, and Windows (amd64 + arm64). |
+| completed | Homebrew formula | Packaging | Stub formula at `contrib/homebrew/qodex.rb`. |
+| completed | Install script | Packaging | `scripts/install.sh` downloads and installs from GitHub Releases. |
+| completed | Contributor guide | Docs | `CONTRIBUTING.md` covers standards, testing, and release process. |
+| completed | CI workflow | Testing/Packaging | GitHub Actions runs tests with race detector on push/PR and releases on tags. |
+| completed | Signed releases | Packaging | GoReleaser signs all artifacts with GPG. See [Release Management](release-management.md). |
 
 ## Near-Term Priority Order
 

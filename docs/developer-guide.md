@@ -6,7 +6,7 @@ This document defines the implementation architecture for Qodex.
 
 Qodex is a local coding agent that runs in a terminal. It should feel like a serious developer tool: fast startup, stable keyboard behavior, clear diffs, explicit approvals, and predictable project-local behavior.
 
-The MVP optimizes for one local model served through `llama.cpp` using an OpenAI-compatible HTTP API. vLLM and SGLang should be optional endpoint-compatible backends.
+The MVP optimizes for one local model served through `llama.cpp` using an OpenAI-compatible HTTP API. vLLM and SGLang are supported as optional endpoint-compatible backends.
 
 ## Technology Choices
 
@@ -26,23 +26,26 @@ Reasons:
 
 Use `spf13/cobra`.
 
-Suggested commands:
+Full command tree:
 
 ```text
 qodex
-qodex init
-qodex chat
-qodex run "prompt"
-qodex config
-qodex config list
-qodex config get <key>
-qodex config set <key> <value>
-qodex models check
-qodex doctor
-qodex skills list
-qodex skills show <name>
-qodex sessions list
-qodex sessions resume <id>
+qodex setup              Interactive first-time setup wizard
+qodex init               Create project-local config and starter skill
+qodex chat               Start the terminal chat UI
+qodex run PROMPT         Run a one-shot agent prompt
+qodex review             Review uncommitted changes
+qodex config list        List effective configuration
+qodex config get KEY     Show one configuration value
+qodex config set KEY VAL Set a project-local configuration value
+qodex doctor             Check configuration and local model connectivity
+qodex skills list        List discovered skills
+qodex skills show NAME   Show a skill
+qodex sessions list      List recent sessions
+qodex sessions resume ID Resume a session in the TUI
+qodex sessions export ID Export session data as JSON
+qodex version            Print version and build metadata
+qodex completion SHELL   Generate shell completion scripts
 ```
 
 ### Terminal UI
@@ -72,23 +75,13 @@ Primary TUI regions:
 └─────────────────────────────────────────────┘
 ```
 
-The TUI should be a thin presentation layer over the agent engine. Keep agent state, storage, model calls, and tool execution independent of Bubble Tea.
+The TUI is a thin presentation layer over the agent engine. Agent state, storage, model calls, and tool execution are independent of Bubble Tea.
 
 ### Storage
 
-Use SQLite.
+Use SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 
-Current MVP driver:
-
-- `modernc.org/sqlite` for pure Go builds.
-
-Other driver options:
-
-- `github.com/mattn/go-sqlite3` if CGO is acceptable.
-
-Keep `modernc.org/sqlite` unless performance or compatibility requires changing later.
-
-Suggested tables:
+Key tables:
 
 ```sql
 sessions(id, project_root, title, created_at, updated_at, model, backend)
@@ -96,16 +89,15 @@ messages(id, session_id, role, content, created_at)
 tool_calls(id, session_id, message_id, name, arguments_json, status, created_at)
 tool_results(id, tool_call_id, output, error, created_at)
 approvals(id, tool_call_id, decision, policy, created_at)
-skills(id, name, source_path, summary, enabled, loaded_at)
+output_artifacts(id, session_id, tool_call_id, tool_name, summary, content, content_type, created_at)
+schema_version(version, applied_at)
 ```
 
-Treat the database as an event log first. Derived indexes can come later.
+The database is treated as an event log first. Derived indexes can come later.
 
 ## Model Runtime
 
 ### Primary Backend: llama.cpp
-
-Qodex should target the `llama.cpp` server OpenAI-compatible API as the primary runtime.
 
 Default configuration:
 
@@ -122,131 +114,184 @@ temperature = 0.2
 top_p = 0.95
 ```
 
-Do not make Ollama the recommended runtime. If support is added later, it should be through the same OpenAI-compatible endpoint abstraction and clearly marked as optional.
+See [llama.cpp Setup Guide](llama-cpp-setup.md) for recommended model tiers and server flags.
 
 ### Advanced Backends
 
-vLLM and SGLang should be supported as endpoint-compatible alternatives.
+vLLM and SGLang are supported as endpoint-compatible alternatives. See the example configs in `examples/`.
 
-The agent should not care whether the backend is `llama.cpp`, vLLM, or SGLang after configuration is loaded. It should only depend on:
+The agent does not care whether the backend is `llama.cpp`, vLLM, or SGLang after configuration is loaded. It depends only on:
 
 - Chat completion request.
 - Streaming tokens.
-- Structured tool-call response format, either native or prompted.
+- Structured tool-call response format, either prompt-based or native `tools`/`tool_calls`.
 - Model name.
 - Context window settings.
 
-### Direct Hugging Face Transformers
+### Capability Detection
 
-Direct `transformers` integration is not recommended for the main Go application because it would pull Python runtime concerns into the CLI. If needed, expose it through a small local HTTP server that implements the same OpenAI-compatible API.
+At startup (TUI mode), the client pings the backend with a streaming probe (`POST /chat/completions` with `stream=true`) to detect whether SSE streaming is supported. The result controls whether the TUI renders tokens incrementally.
 
 ## Package Layout
 
-Suggested Go package layout:
-
 ```text
 cmd/qodex/              Cobra entrypoint
-internal/app/           app wiring
+internal/agent/         Agent loop and orchestration
+internal/config/        Config loading, validation, defaults
+internal/lsp/           JSON-RPC 2.0 LSP client over stdio
+internal/model/         OpenAI-compatible HTTP client + types
+internal/skills/        Skill discovery, selection, context slicing
+internal/store/         SQLite persistence and migrations
+internal/tools/         Tool registry and all built-in tools
 internal/tui/           Bubble Tea models and views
-internal/agent/         agent loop and orchestration
-internal/model/         OpenAI-compatible client
-internal/tools/         tool registry and built-in tools
-internal/skills/        skill discovery and loading
-internal/context/       context assembly and compaction
-internal/store/         SQLite persistence
-internal/config/        config loading and defaults
-internal/approval/      approval policies
-internal/diff/          patch generation and application helpers
 ```
 
-Keep `internal/agent` free from TUI imports.
+`internal/agent` is free of TUI imports.
 
 ## Agent Loop
 
-The agent loop should be explicit and auditable:
+The agent loop is explicit and auditable:
 
 ```text
 1. Receive user prompt.
 2. Load project instructions and enabled skills.
-3. Build model context.
-4. Call local model endpoint.
-5. Parse assistant response.
-6. If response contains tool call:
+3. Build model context (system prompt + conversation history).
+4. Select tool-calling mode:
+   a. Prompt mode (default): instruct model via system prompt to emit JSON tool calls.
+   b. Native mode (opt-in, agent.tool_calls = "native"): send OpenAI tools/tool_calls.
+5. Call local model endpoint (streaming or non-streaming).
+6. Parse assistant response:
+   a. If native mode: extract tool_calls from structured response.
+   b. If prompt mode: extract tool_call JSON from text response.
+7. If response contains tool call(s):
    a. Validate tool name and arguments.
-   b. Evaluate approval policy.
-   c. Execute tool or ask user.
+   b. Evaluate approval policy (read → auto, write/shell → ask).
+   c. Execute tool.
    d. Persist call and result.
    e. Append tool result to context.
-   f. Continue loop.
-7. If response is final text:
+   f. Continue loop (up to max_steps).
+8. If response is final text:
    a. Persist message.
-   b. Render to TUI.
+   b. Return to TUI or CLI caller.
 ```
 
-Hard limits should prevent infinite loops:
+Hard limits:
 
-- Max tool calls per user turn.
-- Max shell command runtime.
-- Max output bytes per tool.
+- Max tool calls per user turn (`agent.max_steps`, default 12).
+- Max shell command runtime (120s default, max 300s).
+- Max output bytes per tool (20000 characters, with artifact fallback for larger output).
 - Max modified files per turn unless approved.
 
 ## Built-In Tools
 
-Current MVP tools:
+16 tools registered in `internal/tools/tools.go`:
 
-```text
-list_files
-read_file
-search_text
-write_file
-write_patch
-run_command
-git_status
-git_diff
+| Tool | Effect | Description |
+|---|---|---|
+| `list_files` | read | List files under project root |
+| `read_file` | read | Read a UTF-8 text file with optional line range |
+| `search_text` | read | Text search in project files |
+| `write_file` | write | Write a complete file |
+| `write_patch` | write | Apply a unified diff via `git apply` |
+| `run_command` | shell | Run a command in project root |
+| `run_script` | shell | Run a pre-approved skill script |
+| `run_tests` | shell | Discover and run tests (go/pytest/jest) |
+| `run_formatter` | shell | Run a code formatter (go/ruff/black/prettier) |
+| `git_status` | read | Show git status |
+| `git_diff` | read | Show git diff |
+| `review_changes` | read | Analyze uncommitted git changes |
+| `project_index` | read | Query file/symbol index or get project summary |
+| `lsp_diagnostics` | read | Run LSP to get diagnostics for a file |
+| `lsp_definition` | read | Go to definition via LSP |
+| `lsp_find_references` | read | Find references via LSP |
+
+`write_file` is useful for small complete-file writes. `write_patch` (unified diff) is preferred for edits to existing files because it preserves surrounding content and is easier to review.
+
+Tool implementations return structured `Result` objects with summary, content, and optional metadata. Large outputs (>64KB) are stored as artifacts and replaced with a summary reference in the context.
+
+## Tool Calling Modes
+
+### Prompt Mode (default)
+
+The system prompt instructs the model to emit a JSON object when it wants a tool:
+
+```json
+{"tool_call":{"name":"read_file","arguments":{"path":"README.md"}}}
 ```
 
-Later tools:
+The agent parses the response with `parseToolCallDetailed`, which handles markdown fences and embedded JSON. Validation errors are fed back to the model for self-repair.
 
-```text
-lsp_diagnostics
-lsp_definition
-lsp_references
-test_runner
-format_files
-browser_preview
-```
+### Native Mode (`agent.tool_calls = "native"`)
 
-`write_file` is useful for small complete-file writes. `write_patch` should be preferred for edits to existing files because it preserves surrounding content and is easier to review.
+The model receives tool schemas via the OpenAI `tools` parameter and returns structured `tool_calls` in the response. The agent dispatches each `tool_call` and appends results as `role: "tool"` messages. Streaming is disabled in native mode.
 
-Tool implementations must return structured results with summarized output and raw output references when needed.
+## LSP Integration
+
+The `internal/lsp` package implements a JSON-RPC 2.0 client over stdio, supporting:
+
+- `gopls` (Go)
+- `pyright-langserver` (Python)
+- `typescript-language-server` (TypeScript/JavaScript)
+- `rust-analyzer` (Rust)
+
+The client sends `textDocument/didOpen` with file content, then supports `textDocument/documentDiagnostics`, `textDocument/definition`, and `textDocument/references`. The server process is started per-tool-call (initialize → request → shutdown).
 
 ## Approval Model
 
 Default policy:
 
-- Reading files inside the project: allow.
+- Reading files inside the project: allow (read effect).
 - Searching files inside the project: allow.
-- Writing files: ask.
-- Running commands: ask.
-- Network commands: ask and mark clearly.
+- Writing files: ask (write effect).
+- Running commands: ask (shell effect).
+- Network commands: ask (network effect).
 - Commands outside project root: ask.
-- Destructive commands: deny by default or require a high-friction confirmation.
+- Destructive commands: deny by default (rejected before approval).
 
-The approval system should be independent of the TUI so `qodex run` can use the same policy.
+The approval system is independent of the TUI so `qodex run` can use the same policy (stdin prompt) as `qodex chat` (inline TUI panel).
 
 ## Configuration
 
-Recommended locations:
+Locations:
 
 ```text
 Project config: .qodex/config.toml
 Project skills: .qodex/skills/
 User config: ~/.config/qodex/config.toml
 User skills: ~/.config/qodex/skills/
-Database: .qodex/qodex.db by default for the MVP
+Database: .qodex/qodex.db
 ```
 
 User config is loaded first, then project config overrides it where explicitly set.
+
+Full config reference (see `internal/config/config.go`):
+
+```toml
+[model]
+provider = "openai-compatible"
+base_url = "http://127.0.0.1:8080/v1"
+model = "qwen2.5-coder"
+
+[runtime]
+backend = "llama.cpp"
+context_tokens = 32768
+temperature = 0.2
+top_p = 0.95
+
+[approval]
+write_files = "ask"
+run_commands = "ask"
+network = "ask"
+auto_approve = false
+
+[store]
+path = ".qodex/qodex.db"
+
+[agent]
+max_steps = 12
+skill_routing = "auto"
+tool_calls = "prompt"
+```
 
 ## Getting Started With Development
 
@@ -254,12 +299,13 @@ User config is loaded first, then project config overrides it where explicitly s
 
 - Go 1.26+ (check `go version`)
 - A local `llama.cpp` server (recommended) or any OpenAI-compatible endpoint
+- For LSP tools: `gopls`, `pyright`, `typescript-language-server`, or `rust-analyzer` as needed
 
 ### Quick Start
 
 ```bash
-# Build the binary
-go build ./cmd/qodex
+# Build the binary with version metadata
+go build -ldflags="-X main.version=0.1.0 -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" ./cmd/qodex
 
 # List all available commands
 ./qodex --help
@@ -277,37 +323,118 @@ go build ./cmd/qodex
 ./qodex review
 ```
 
-### Testing Without A Real Model
+### Testing
 
-The test suite uses fake HTTP servers and does **not** require a running model. Run all tests with:
-
-```bash
-go test ./...
-```
-
-Run a specific package's tests:
+The test suite uses fake HTTP servers and does **not** require a running model.
 
 ```bash
+# Full suite with race detector
+go test -race ./...
+
+# Single package
 go test ./internal/agent/... -v
-go test ./internal/tools/... -v
-go test ./internal/tui/... -v
+
+# Single test
+go test ./internal/tools/... -v -run TestToolSchemas
 ```
 
-Run a single test:
+The agent tests use a `roundTripFunc` HTTP transport that returns deterministic JSON responses.
+
+### Manual Local Test Scenarios
+
+After building locally, run these checks to verify behavior end to end.
+
+**CLI smoke tests**
 
 ```bash
-go test ./internal/agent/... -v -run TestAgentReadsFile
+./qodex version
+./qodex doctor
+./qodex config list
+./qodex skills list
+./qodex sessions list
 ```
 
-The agent tests (`internal/agent/agent_test.go`) use a `roundTripFunc` HTTP transport that returns deterministic JSON responses — no real model server is needed. See `TestAgentReadsFile` for the pattern:
+**One-shot agent prompt**
+
+This validates tool dispatch, shell approval, and result rendering without the TUI:
+
+```bash
+./qodex run "list Go files then show the first 5 lines of go.mod"
+```
+
+**Review changed files**
+
+```bash
+./qodex review
+```
+
+**TUI session**
+
+```bash
+./qodex chat
+```
+
+In the TUI, verify:
+- Token streaming appears incrementally.
+- File diff preview renders.
+- Approval prompts show the changed content summary.
+- `q` or `Ctrl+C` exits cleanly.
+
+**Local model endpoint tests**
+
+```bash
+# Start llama-server in another terminal
+llama-server -m ./models/qwen2.5-coder-7b-q4_k_m.gguf \
+  --host 127.0.0.1 --port 8080 --ctx-size 32768
+
+# Check connectivity
+./qodex doctor
+
+# One-shot against the real model
+./qodex run "Explain this repository in three sentences"
+
+# Chat with streaming
+./qodex chat
+```
+
+If `doctor` shows timing out or unreachable, check host, port, context size, and model path.
+
+**LSP tool checks**
+
+```bash
+# Ensure gopls is installed
+go install golang.org/x/tools/gopls@latest
+
+# Open a Go file scope and ask for diagnostics
+./qodex run "run lsp diagnostics on ./internal/agent/agent.go"
+```
+
+**Session and database checks**
+
+```bash
+./qodex sessions list
+sqlite3 .qodex/qodex.db "select id, title, model, updated_at from sessions order by updated_at desc limit 5;"
+```
+
+**Approval behavior**
+
+```bash
+# Answered prompts should appear for write/shell tools
+./qodex run "write a temp file to /tmp/qodex-test and then run ls -la /tmp"
+```
+
+With `--yes`, approvals are skipped:
+
+```bash
+./qodex --yes run "run ls -la"
+```
 
 ```go
 client := model.NewClient("http://fake.local/v1", "fake")
 client.HTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-    // Return a tool_call on first request, final answer on second
     switch r.URL.Path {
     case "/v1/chat/completions":
-        return jsonResponse(chatRequest{...}), nil
+        return jsonResponse(map[string]interface{}{"choices": ...}), nil
     }
     return nil, fmt.Errorf("unexpected: %s", r.URL.Path)
 })}
@@ -315,22 +442,14 @@ client.HTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) 
 
 ### Running With A Real Local Model
 
-1. Start `llama.cpp` server with a Qwen Coder GGUF model:
+1. Start `llama.cpp` server:
    ```bash
-   llama-server -m qwen2.5-coder-7b-q4_k_m.gguf --host 127.0.0.1 --port 8080
+   llama-server -m qwen2.5-coder-7b-q4_k_m.gguf --host 127.0.0.1 --port 8080 --ctx-size 32768
    ```
 
 2. Verify connectivity:
    ```bash
    ./qodex doctor
-   ```
-   Expected output:
-   ```
-   Project root: /path/to/project
-   Model endpoint: http://127.0.0.1:8080/v1
-   Model name: qwen2.5-coder
-   Runtime backend: llama.cpp
-   Model endpoint: ok
    ```
 
 3. Run the agent:
@@ -338,51 +457,22 @@ client.HTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) 
    ./qodex chat
    ```
 
-### Configuring The Endpoint
-
-Edit `.qodex/config.toml` or set values via the CLI:
-
-```bash
-./qodex config set model.base_url http://127.0.0.1:8080/v1
-./qodex config set model.model qwen2.5-coder
-./qodex config set runtime.temperature 0.2
-./qodex config list
-```
-
-See the full config reference with `./qodex config --help`.
-
 ### Debugging Tips
 
-**Verbose test output:**
 ```bash
-go test ./... -v 2>&1 | head -100
-```
-
-**Race detection:**
-```bash
+# Race detection
 go test -race ./...
-```
 
-**Viewing SQLite state during a session:**
-```bash
+# View SQLite state during a session
 sqlite3 .qodex/qodex.db
 .tables
 select * from sessions;
 select * from messages;
-select * from tool_calls;
-```
 
-**Checking what tools are registered:**
-```bash
+# List registered tools
 grep 'r\.add(' internal/tools/tools.go
 ```
 
-**Recompiling on change (watch mode):**
-```bash
-go build ./cmd/qodex && ./qodex doctor
-```
-
-**Capturing full agent log output:**
 The agent emits structured events via the `Observer` interface. Add a logging observer in `buildRuntime` (`cmd/qodex/main.go`) to inspect event flow:
 
 ```go
@@ -394,24 +484,32 @@ agt.SetObserver(agent.ObserverFunc(func(event agent.Event) {
 ### Common Development Workflows
 
 **Adding a new tool:**
-1. Write the executor method on `*Registry` in `internal/tools/tools.go` (or a new file).
+1. Write the executor method on `*Registry` in a new file under `internal/tools/`.
 2. Register it with `r.add(...)` in `NewRegistry`.
-3. Add tests in `internal/tools/tools_test.go` using `t.TempDir()` and `json.Marshal` for args.
+3. Add tests using `t.TempDir()` and `json.Marshal` for args.
 4. Run `go test ./internal/tools/...` to verify.
 
 **Modifying the agent loop:**
 The core loop is in `internal/agent/agent.go`, method `Run()`. Each iteration:
 1. Calls `compactContext()` if approaching token limit.
-2. Calls `chat()` (streaming or non-streaming).
-3. Parses the response via `parseToolCallDetailed()`.
-4. If it's a tool call, calls `executeTool()`.
-5. If it's a final answer, returns.
+2. Calls `chat()` (prompt mode) or `chatWithTools()` (native mode).
+3. If native mode: dispatches `tool_calls` from structured response.
+4. If prompt mode: parses tool call via `parseToolCallDetailed()`.
+5. Executes the tool via `executeTool()`.
+6. Returns final answer when no tool call is detected.
+
+**Adding a new config key:**
+1. Add the field to the appropriate struct in `internal/config/config.go`.
+2. Set the default in `Defaults()`.
+3. Add validation in `Validate()`.
+4. Add to `Values()` and `Get()`.
+5. Add a test in `internal/config/config_test.go`.
 
 **Adding a database migration:**
-1. Append a `migration` struct to `var migrations` in `internal/store/migrations.go`.
+1. Append a `migration` struct to `var migrations` in `internal/store/store.go`.
 2. Increment the version number.
 3. Write the `CREATE TABLE` / `ALTER TABLE` SQL.
-4. Add store methods in `internal/store/store.go`.
+4. Add store methods for the new table.
 
 ### Project Layout Reference
 
@@ -419,79 +517,41 @@ The core loop is in `internal/agent/agent.go`, method `Run()`. Each iteration:
 cmd/qodex/              Cobra CLI entrypoint
 internal/agent/         Agent loop, tool dispatch, approval
 internal/config/        TOML config loading and validation
-internal/model/         OpenAI-compatible HTTP client
+internal/lsp/           JSON-RPC 2.0 LSP client (gopls, pyright, etc.)
+internal/model/         OpenAI-compatible HTTP client + types
 internal/skills/        Skill discovery, selection, context slicing
 internal/store/         SQLite persistence + migrations
 internal/tools/         Tool registry and all built-in tools
 internal/tui/           Bubble Tea TUI (chat, approvals, streaming)
-docs/                   Documentation and roadmap
+docs/                   Documentation, roadmap, and guides
+contrib/homebrew/       Homebrew formula
+scripts/                Install script
+.github/workflows/      CI + release workflows
 ```
 
 ## Testing Strategy
 
 Test the agent as deterministic components:
 
-- Tool schema validation.
-- Tool execution behavior with temp project fixtures.
+- Tool schema validation and execution behavior with temp project fixtures.
 - Skill discovery and precedence.
-- Context assembly.
-- Approval decisions.
-- SQLite migrations.
+- Config loading, validation, and TOML parsing.
+- SQLite migrations and CRUD operations.
 - Model client request/response parsing using fake HTTP servers.
+- Agent loop with fake model responses (both prompt and native tool call modes).
+- LSP client with gopls integration tests.
+- TUI approval key handling and auto-approve.
 
-Avoid tests that require a real model for normal CI. Add optional integration tests for a running local `llama.cpp` endpoint.
+Avoid tests that require a real model for normal CI. Integration tests for a running local `llama.cpp` endpoint are optional.
 
-## Development Milestones
+## Release Process
 
-### Milestone 1: Headless Agent
+See [Release Management](release-management.md) for the full process:
 
-- Cobra command.
-- Config loader.
-- OpenAI-compatible streaming client.
-- Tool registry.
-- `read_file`, `search_text`, `run_command`.
-- Basic prompt-to-response loop.
-
-Status: implemented with non-streaming chat completions.
-
-### Milestone 2: File Editing
-
-- `write_patch`.
-- Diff preview.
-- Approval handling.
-- Git status/diff tools.
-
-Status: partially implemented with `write_file`, `write_patch`, approval handling, and Git tools. Diff preview remains.
-
-### Milestone 3: TUI
-
-- Bubble Tea chat screen.
-- Streaming response rendering.
-- Tool timeline.
-- Approval prompt UI.
-
-Status: chat screen, resume rendering, inline tool timeline, and in-TUI approvals are implemented. Streaming and richer diff/error panels remain.
-
-### Milestone 4: Skills
-
-- Skill discovery.
-- `SKILL.md` loading.
-- Skill selection by command and model-assisted routing.
-- Skill context budgets.
-
-Status: basic discovery, explicit prompt matching, and context loading implemented.
-
-### Milestone 5: Persistence
-
-- SQLite event store.
-- Session resume.
-- Tool result history.
-- Context compaction.
-
-Status: SQLite session/message/tool storage, session listing, and TUI resume implemented. Context compaction remains.
-
-### Milestone 6: Advanced Backends
-
-- vLLM endpoint profile.
-- SGLang endpoint profile.
-- Backend diagnostics through `qodex doctor`.
+1. GPG key setup and GitHub secrets configuration.
+2. Tagging with `git tag -s` (signed tags).
+3. CI release via GoReleaser on `v*` tags.
+4. Artifact signing (`.sig` files).
+5. Homebrew formula SHA-256 update.
+6. Install script verification.
+7. Rollback procedures.

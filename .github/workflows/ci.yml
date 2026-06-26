@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: "Test (${{ matrix.go }}, ${{ matrix.os }})"
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go: ["1.26"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+
+      - name: Check tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum || (echo "go mod tidy changed files — please run go mod tidy locally" && exit 1)
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+          args: --timeout 5m
+
+      - name: Build
+        env:
+          CGO_ENABLED: 0
+        run: go build -v -ldflags="-X main.version=0.1.0-dev -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" ./cmd/qodex
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test with race detector
+        run: go test -race -count=1 ./...
