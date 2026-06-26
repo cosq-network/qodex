@@ -185,7 +185,7 @@ func TestExtractAutoQuery(t *testing.T) {
 	}
 }
 
-func TestFuzzyFind(t *testing.T) {
+func TestMatchFiles(t *testing.T) {
 	files := []string{"README.md", "internal/tui/tui.go", "internal/agent/agent.go", "cmd/qodex/main.go"}
 	tests := []struct {
 		query string
@@ -199,7 +199,7 @@ func TestFuzzyFind(t *testing.T) {
 		{"", 0},
 	}
 	for _, tc := range tests {
-		matches := fuzzyFind(files, tc.query)
+		matches := matchFiles(files, tc.query)
 		if len(matches) != tc.want {
 			t.Errorf("fuzzyFind(%q) = %d matches, want %d: %v", tc.query, len(matches), tc.want, matches)
 		}
@@ -209,6 +209,7 @@ func TestFuzzyFind(t *testing.T) {
 func TestAutocompleteSelect(t *testing.T) {
 	model := New(agent.New(agent.Options{}))
 	model.projectFiles = []string{"README.md", "internal/tui/tui.go", "internal/agent/agent.go"}
+	model.filesLoaded = true
 	model.input.SetValue("read @README")
 	model.updateAutocomplete()
 	if !model.autoShow {
@@ -231,6 +232,7 @@ func TestAutocompleteSelect(t *testing.T) {
 func TestAutocompleteDismissWithEscape(t *testing.T) {
 	model := New(agent.New(agent.Options{}))
 	model.projectFiles = []string{"README.md", "internal/tui/tui.go"}
+	model.filesLoaded = true
 	model.input.SetValue("@README")
 	model.updateAutocomplete()
 	if !model.autoShow {
@@ -246,6 +248,7 @@ func TestAutocompleteDismissWithEscape(t *testing.T) {
 func TestAutocompletePartialMatch(t *testing.T) {
 	model := New(agent.New(agent.Options{}))
 	model.projectFiles = []string{"internal/tui/tui.go", "internal/tui/tui_test.go", "internal/agent/agent.go"}
+	model.filesLoaded = true
 	model.input.SetValue("read @tui")
 	model.updateAutocomplete()
 	if !model.autoShow {

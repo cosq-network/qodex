@@ -244,7 +244,7 @@ func TestSelectViaModelSelectsRelevant(t *testing.T) {
 		return `{"skills": ["go"]}`, nil
 	}
 
-	result, err := SelectViaModel(all, "write a goroutine", ask)
+	result, err := SelectViaModel(context.Background(), all, "write a goroutine", ask)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestSelectViaModelEmptyReturnsProjectOnly(t *testing.T) {
 		return `{"skills": []}`, nil
 	}
 
-	result, err := SelectViaModel(all, "deploy the app", ask)
+	result, err := SelectViaModel(context.Background(), all, "deploy the app", ask)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +284,7 @@ func TestSelectViaModelFallbackOnParseError(t *testing.T) {
 		return "not json", nil
 	}
 
-	_, err := SelectViaModel(all, "test", ask)
+	_, err := SelectViaModel(context.Background(), all, "test", ask)
 	if err == nil {
 		t.Fatal("expected error for bad JSON")
 	}
@@ -300,7 +300,7 @@ func TestSelectViaModelIgnoresProjectInResponse(t *testing.T) {
 		return `{"skills": ["project", "foo"]}`, nil
 	}
 
-	result, err := SelectViaModel(all, "foo task", ask)
+	result, err := SelectViaModel(context.Background(), all, "foo task", ask)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +322,7 @@ func TestSelectViaModelReturnsNilWhenEmptyAndRestricted(t *testing.T) {
 		return `{"skills": []}`, nil
 	}
 
-	result, err := SelectViaModel(all, "task", ask)
+	result, err := SelectViaModel(context.Background(), all, "task", ask)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +345,7 @@ func TestSelectViaModelCapsAtThree(t *testing.T) {
 		return `{"skills": ["a", "b", "c"]}`, nil
 	}
 
-	result, err := SelectViaModel(all, "task", ask)
+	result, err := SelectViaModel(context.Background(), all, "task", ask)
 	if err != nil {
 		t.Fatal(err)
 	}

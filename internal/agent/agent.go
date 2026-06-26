@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/benoybose/qodex/internal/config"
 	"github.com/benoybose/qodex/internal/model"
@@ -22,15 +24,16 @@ type PlanState struct {
 }
 
 type Options struct {
-	Config    config.Config
-	Client    *model.Client
-	Tools     *tools.Registry
-	Store     *store.Store
-	Skills    []skills.Skill
-	Approver  Approver
-	Observer  Observer
-	MaxSteps  int
-	SessionID int64
+	Config      config.Config
+	Client      *model.Client
+	Tools       *tools.Registry
+	Store       *store.Store
+	Skills      []skills.Skill
+	Approver    Approver
+	Observer    Observer
+	MaxSteps    int
+	SessionID   int64
+	DebugWriter io.Writer // optional; if set, diagnostic messages are written here too
 }
 
 type Agent struct {
@@ -49,6 +52,7 @@ type Agent struct {
 	planState      PlanState
 	allowedTools   []string
 	selectedSkills []skills.Skill
+	debugWriter    io.Writer
 }
 
 type ApprovalRequest struct {
@@ -92,15 +96,16 @@ func New(opts Options) *Agent {
 		maxSteps = 12
 	}
 	return &Agent{
-		cfg:       opts.Config,
-		client:    opts.Client,
-		tools:     opts.Tools,
-		store:     opts.Store,
-		skills:    opts.Skills,
-		approver:  opts.Approver,
-		observer:  opts.Observer,
-		maxSteps:  maxSteps,
-		sessionID: opts.SessionID,
+		cfg:         opts.Config,
+		client:      opts.Client,
+		tools:       opts.Tools,
+		store:       opts.Store,
+		skills:      opts.Skills,
+		approver:    opts.Approver,
+		observer:    opts.Observer,
+		maxSteps:    maxSteps,
+		sessionID:   opts.SessionID,
+		debugWriter: opts.DebugWriter,
 	}
 }
 
@@ -124,7 +129,14 @@ func (a *Agent) SetStreaming(enabled bool) {
 	a.streaming = enabled
 }
 
-func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
+func (a *Agent) Run(ctx context.Context, prompt string) (result string, err error) {
+	a.logDebug("agent run: prompt=%q tool_calls=%s max_steps=%d", prompt, a.cfg.Agent.ToolCalls, a.maxSteps)
+	defer func() {
+		if r := recover(); r != nil {
+			a.logError("panic in agent loop: %v", r)
+			err = fmt.Errorf("agent panicked: %v", r)
+		}
+	}()
 	a.planState.CurrentTask = prompt
 	if a.sessionID == 0 {
 		title := prompt
@@ -138,7 +150,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
 		a.sessionID = id
 	}
 	if len(a.messages) == 0 {
-		a.selectSkills(prompt)
+		a.selectSkills(ctx, prompt)
 		a.messages = append(a.messages, model.Message{Role: "system", Content: a.systemPrompt(prompt)})
 		if a.sessionID != 0 {
 			stored, err := a.store.ListMessages(ctx, a.sessionID)
@@ -170,18 +182,76 @@ func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
 		a.logError("failed to persist user message: %v", err)
 	}
 
+	useNative := a.cfg.Agent.ToolCalls == "native"
+
 	for step := 0; step < a.maxSteps; step++ {
+		if useNative {
+			tools := a.tools.ToolSchemas()
+			res, err := a.chatWithTools(ctx, tools)
+			if err != nil {
+				return "", err
+			}
+			if len(res.ToolCalls) > 0 {
+				a.logDebug("model returned %d native tool calls", len(res.ToolCalls))
+				for _, tc := range res.ToolCalls {
+					a.logDebug("  tool_call: %s args=%s", tc.Function.Name, string(tc.Function.Arguments))
+					resultText, err := a.executeTool(ctx, toolCall{
+						Name:      tc.Function.Name,
+						Arguments: tc.Function.Arguments,
+					})
+					if err != nil {
+						resultText = fmt.Sprintf(`{"ok":false,"summary":"tool failed","content":%q}`, err.Error())
+					}
+					a.messages = append(a.messages, model.Message{
+						Role:    "assistant",
+						Content: res.Content,
+						ToolCalls: []model.ToolCall{{
+							ID:   tc.ID,
+							Type: tc.Type,
+							Function: model.ToolCallFunction{
+								Name:      tc.Function.Name,
+								Arguments: tc.Function.Arguments,
+							},
+						}},
+					})
+					a.messages = append(a.messages, model.Message{
+						Role:       "tool",
+						ToolCallID: tc.ID,
+						Content:    resultText,
+					})
+					if err := a.store.AddMessage(ctx, a.sessionID, "assistant", res.Content); err != nil {
+						a.logError("failed to persist assistant message: %v", err)
+					}
+					if err := a.store.AddMessage(ctx, a.sessionID, "tool", resultText); err != nil {
+						a.logError("failed to persist tool result message: %v", err)
+					}
+				}
+				continue
+			}
+			if res.Content != "" {
+				a.messages = append(a.messages, model.Message{Role: "assistant", Content: res.Content})
+				if err := a.store.AddMessage(ctx, a.sessionID, "assistant", res.Content); err != nil {
+					a.logError("failed to persist assistant message: %v", err)
+				}
+				return res.Content, nil
+			}
+			return "", fmt.Errorf("agent: empty response from model")
+		}
+
 		content, err := a.chat(ctx)
 		if err != nil {
 			return "", err
 		}
+		a.logDebug("model response: %s", debugTruncate(content, 500))
 		call, ok, validationErr := parseToolCallDetailed(content)
 		if validationErr != nil {
+			a.logDebug("tool call validation error: %v", validationErr)
 			a.messages = append(a.messages, model.Message{Role: "assistant", Content: content})
 			a.messages = append(a.messages, model.Message{Role: "user", Content: "Tool call validation error: " + validationErr.Error() + "\nRespond with exactly one valid tool_call JSON object or a final answer."})
 			continue
 		}
 		if ok {
+			a.logDebug("parsed tool call: %s args=%s", call.Name, string(call.Arguments))
 			resultText, err := a.executeTool(ctx, call)
 			if err != nil {
 				resultText = fmt.Sprintf(`{"ok":false,"summary":"tool failed","content":%q}`, err.Error())
@@ -261,13 +331,18 @@ func (a *Agent) chat(ctx context.Context) (string, error) {
 	return full.String(), nil
 }
 
-func (a *Agent) selectSkills(userPrompt string) {
+func (a *Agent) chatWithTools(ctx context.Context, tools []model.ToolSchema) (*model.ResponseMessage, error) {
+	a.compactContext()
+	return a.client.ChatWithTools(ctx, a.messages, a.cfg.Runtime.Temperature, a.cfg.Runtime.TopP, tools)
+}
+
+func (a *Agent) selectSkills(ctx context.Context, userPrompt string) {
 	if a.cfg.Agent.SkillRouting == "model" && a.client != nil {
 		ask := func(ctx context.Context, msg string) (string, error) {
 			msgs := []model.Message{{Role: "user", Content: msg}}
 			return a.client.Chat(ctx, msgs, 0.0, 1.0)
 		}
-		modelSelected, err := skills.SelectViaModel(a.skills, userPrompt, ask)
+		modelSelected, err := skills.SelectViaModel(ctx, a.skills, userPrompt, ask)
 		if err == nil && modelSelected != nil {
 			a.selectedSkills = modelSelected
 			a.allowedTools = skills.AllowedTools(modelSelected)
@@ -282,9 +357,14 @@ func (a *Agent) systemPrompt(userPrompt string) string {
 	var b strings.Builder
 	b.WriteString("You are Qodex, a local coding agent running on the user's machine.\n")
 	b.WriteString("You must not claim to have read, changed, or executed anything unless a tool result proves it.\n")
-	b.WriteString("When you need a tool, respond with exactly one JSON object and no Markdown:\n")
-	b.WriteString(`{"tool_call":{"name":"read_file","arguments":{"path":"README.md"}}}` + "\n")
-	b.WriteString("When you have enough information, respond normally with the final answer.\n")
+	if a.cfg.Agent.ToolCalls == "native" {
+		b.WriteString("Use the available tools when you need to interact with the project. Call one tool at a time.\n")
+		b.WriteString("When you have enough information, respond with the final answer.\n")
+	} else {
+		b.WriteString("When you need a tool, respond with exactly one JSON object and no Markdown:\n")
+		b.WriteString(`{"tool_call":{"name":"read_file","arguments":{"path":"README.md"}}}` + "\n")
+		b.WriteString("When you have enough information, respond normally with the final answer.\n")
+	}
 	b.WriteString("Prefer narrow reads and searches before edits. Explain risky actions before requesting shell commands.\n\n")
 	b.WriteString("Current task: ")
 	b.WriteString(a.planState.CurrentTask)
@@ -406,6 +486,7 @@ func (a *Agent) executeTool(ctx context.Context, call toolCall) (string, error) 
 	if !ok {
 		return "", fmt.Errorf("unknown tool: %s", call.Name)
 	}
+	a.logDebug("execute tool: %s args=%s", call.Name, string(call.Arguments))
 	callID, err := a.store.AddToolCall(ctx, a.sessionID, call.Name, string(call.Arguments), "requested")
 	if err != nil {
 		a.logError("failed to persist tool call: %v", err)
@@ -559,11 +640,32 @@ func (a *Agent) executeScript(ctx context.Context, call toolCall) (string, error
 }
 
 func (a *Agent) logError(format string, args ...interface{}) {
-	fmt.Fprintf(os.Stderr, "[qodex] "+format+"\n", args...)
+	msg := fmt.Sprintf("[qodex] "+format, args...)
+	fmt.Fprintln(os.Stderr, msg)
+	if a.debugWriter != nil {
+		ts := time.Now().UTC().Format(time.RFC3339)
+		fmt.Fprintf(a.debugWriter, "%s ERROR %s\n", ts, msg)
+	}
+}
+
+func (a *Agent) logDebug(format string, args ...interface{}) {
+	if a.debugWriter == nil {
+		return
+	}
+	msg := fmt.Sprintf(format, args...)
+	ts := time.Now().UTC().Format(time.RFC3339)
+	fmt.Fprintf(a.debugWriter, "%s DEBUG %s\n", ts, msg)
 }
 
 func (a *Agent) emit(event Event) {
 	if a.observer != nil {
 		a.observer.OnEvent(event)
 	}
+}
+
+func debugTruncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }

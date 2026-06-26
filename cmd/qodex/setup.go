@@ -257,15 +257,26 @@ func printLLamaInstructions() {
 	fmt.Println("  ────────────────────")
 }
 
-// ensureConfigExists checks whether a project-level config file exists.
-// If not, it alerts the user and optionally runs the setup wizard.
+// ensureConfigExists checks whether a global or project-level config file exists.
 func ensureConfigExists(projectRoot string) bool {
+	home, err := os.UserHomeDir()
+	if err == nil {
+		if _, err := os.Stat(filepath.Join(home, ".config", "qodex", "config.toml")); err == nil {
+			return true
+		}
+	}
 	configPath := filepath.Join(projectRoot, ".qodex", "config.toml")
-	_, err := os.Stat(configPath)
+	_, err = os.Stat(configPath)
 	return err == nil
 }
 
 func promptRunSetup(projectRoot string) error {
+	fi, err := os.Stdin.Stat()
+	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+		fmt.Println("No Qodex configuration found.")
+		fmt.Println("Run 'qodex init' to create one or 'qodex setup' for the interactive wizard.")
+		return fmt.Errorf("setup required")
+	}
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println()
 	fmt.Println("No Qodex configuration found.")

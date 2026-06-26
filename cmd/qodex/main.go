@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -26,7 +27,30 @@ import (
 	"github.com/benoybose/qodex/internal/tui"
 )
 
+// debugLog is the writer for --debug output. Set by rootCmd.
+var debugLog io.Writer
+
+// Set via ldflags at build time:
+//
+//	go build -ldflags="-X main.version=0.1.0 -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" ./cmd/qodex
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "\nqodex: unexpected error — %v\n", r)
+			fmt.Fprintln(os.Stderr, "Please report this at https://github.com/benoybose/qodex/issues")
+			if debugLog != nil {
+				ts := time.Now().UTC().Format(time.RFC3339)
+				fmt.Fprintf(debugLog, "%s PANIC %v\n", ts, r)
+			}
+			os.Exit(1)
+		}
+	}()
 	if err := rootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -36,13 +60,27 @@ func main() {
 func rootCmd() *cobra.Command {
 	var cfgPath string
 	var yes bool
+	var debugPath string
 
 	cmd := &cobra.Command{
 		Use:   "qodex",
 		Short: "Local-first coding agent for llama.cpp and Qwen Coder",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if debugPath != "" {
+				f, err := os.OpenFile(debugPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+				if err != nil {
+					return fmt.Errorf("open debug log: %w", err)
+				}
+				debugLog = f
+				ts := time.Now().UTC().Format(time.RFC3339)
+				fmt.Fprintf(debugLog, "%s qodex version=%s commit=%s\n", ts, version, commit)
+			}
+			return nil
+		},
 	}
 	cmd.PersistentFlags().StringVar(&cfgPath, "config", "", "config file path")
 	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "auto-approve write and shell tools")
+	cmd.PersistentFlags().StringVar(&debugPath, "debug", "", "write diagnostics to this file")
 
 	cmd.AddCommand(setupCmd())
 	cmd.AddCommand(initCmd())
@@ -53,7 +91,75 @@ func rootCmd() *cobra.Command {
 	cmd.AddCommand(skillsCmd())
 	cmd.AddCommand(sessionsCmd(&cfgPath, &yes))
 	cmd.AddCommand(reviewCmd(&cfgPath, &yes))
+	cmd.AddCommand(resetCmd())
+	cmd.AddCommand(versionCmd())
+	cmd.AddCommand(completionCmd())
 	return cmd
+}
+
+func completionCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "completion [bash|zsh|fish|powershell]",
+		Short: "Generate shell completion scripts",
+		Long: `Generate shell completion script for qodex.
+
+Installation:
+
+  Bash:
+    source <(qodex completion bash)
+    # To load permanently:
+    echo "source <(qodex completion bash)" >> ~/.bashrc
+
+  Zsh:
+    source <(qodex completion zsh)
+    # To load permanently:
+    echo "source <(qodex completion zsh)" >> ~/.zshrc
+
+  Fish:
+    qodex completion fish | source
+    # To load permanently:
+    qodex completion fish > ~/.config/fish/completions/qodex.fish
+
+  PowerShell:
+    qodex completion powershell | Out-String | Invoke-Expression
+`,
+		Args: cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
+		ValidArgs: []string{"bash", "zsh", "fish", "powershell"},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			root := cmd.Root()
+			root.SetArgs([]string{}) // clear to prevent recursion
+			switch args[0] {
+			case "bash":
+				return root.GenBashCompletion(os.Stdout)
+			case "zsh":
+				return root.GenZshCompletion(os.Stdout)
+			case "fish":
+				return root.GenFishCompletion(os.Stdout, true)
+			case "powershell":
+				return root.GenPowerShellCompletionWithDesc(os.Stdout)
+			default:
+				return fmt.Errorf("unsupported shell: %s", args[0])
+			}
+		},
+	}
+	return cmd
+}
+
+func versionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print version and build metadata",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Printf("qodex version %s\n", version)
+			if commit != "none" {
+				fmt.Printf("commit %s\n", commit)
+			}
+			if date != "unknown" {
+				fmt.Printf("built  %s\n", date)
+			}
+			return nil
+		},
+	}
 }
 
 func configCmd(cfgPath *string) *cobra.Command {
@@ -378,6 +484,15 @@ func sessionsCmd(cfgPath *string, yes *bool) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("invalid session id: %w", err)
 			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			if !ensureConfigExists(cwd) {
+				if err := promptRunSetup(cwd); err != nil {
+					return err
+				}
+			}
 			rt, err := buildRuntime(*cfgPath, *yes, true, id)
 			if err != nil {
 				return err
@@ -525,22 +640,25 @@ func buildRuntime(cfgPath string, yes bool, tuiMode bool, sessionID int64) (*run
 	client := model.NewClient(cfg.Model.BaseURL, cfg.Model.Model)
 	registry := tools.NewRegistry(cfg.ProjectRoot)
 	agt := agent.New(agent.Options{
-		Config:    cfg,
-		Client:    client,
-		Tools:     registry,
-		Store:     db,
-		Skills:    skillSet,
-		Approver:  approver,
-		MaxSteps:  cfg.Agent.MaxSteps,
-		SessionID: sessionID,
+		Config:      cfg,
+		Client:      client,
+		Tools:       registry,
+		Store:       db,
+		Skills:      skillSet,
+		Approver:    approver,
+		MaxSteps:    cfg.Agent.MaxSteps,
+		SessionID:   sessionID,
+		DebugWriter: debugLog,
 	})
 	if tuiMode {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		caps := client.DetectCapabilities(ctx)
-		cancel()
-		if caps.Streaming {
-			agt.SetStreaming(true)
-		}
+		probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer probeCancel()
+		go func() {
+			caps := client.DetectCapabilities(probeCtx)
+			if caps.Streaming {
+				agt.SetStreaming(true)
+			}
+		}()
 	}
 	return &runtime{Agent: agt, Store: db, AutoApprove: yes || cfg.Approval.AutoApprove}, nil
 }

@@ -195,8 +195,7 @@ func Summarize(skills []Skill) string {
 	return b.String()
 }
 
-func SelectViaModel(all []Skill, prompt string, ask func(ctx context.Context, msg string) (string, error)) ([]Skill, error) {
-	ctx := context.Background()
+func SelectViaModel(ctx context.Context, all []Skill, prompt string, ask func(ctx context.Context, msg string) (string, error)) ([]Skill, error) {
 
 	summaries := Summarize(all)
 	selectionPrompt := `You are a skill router. Select the most relevant skills for the given task.

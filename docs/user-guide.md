@@ -238,6 +238,108 @@ qodex sessions list
 qodex sessions resume <id>
 ```
 
+## Reset
+
+To remove all Qodex state from the current project:
+
+```sh
+qodex reset
+```
+
+This deletes the `.qodex/` directory (project config, database with session history, and skills). It prompts for confirmation unless `--force`/`-f` is passed.
+
+To also remove the global `~/.config/qodex/` directory (user-level config and skills):
+
+```sh
+qodex reset --all
+```
+
+## Backend Profiles
+
+Qodex supports multiple OpenAI-compatible local backends. The `runtime.backend` config value selects the profile.
+
+### llama.cpp (Default)
+
+```toml
+[runtime]
+backend = "llama.cpp"
+```
+
+See [llama.cpp Setup Guide](llama-cpp-setup.md) for model recommendations and server flags.
+
+### vLLM
+
+```toml
+[runtime]
+backend = "vllm"
+```
+
+vLLM serves an OpenAI-compatible endpoint on port 8000 by default. Example server command:
+
+```sh
+vllm serve Qwen/Qwen2.5-Coder-7B-Instruct --host 0.0.0.0 --port 8000
+```
+
+Configure Qodex to match:
+
+```toml
+[model]
+base_url = "http://127.0.0.1:8000/v1"
+model = "Qwen/Qwen2.5-Coder-7B-Instruct"
+```
+
+See `examples/config.vllm.toml` for a full config.
+
+### SGLang
+
+```toml
+[runtime]
+backend = "sglang"
+```
+
+SGLang serves an OpenAI-compatible endpoint on port 30000 by default. Example server command:
+
+```sh
+python -m sglang.launch_server --model-path Qwen/Qwen2.5-Coder-7B-Instruct --port 30000
+```
+
+Configure Qodex to match:
+
+```toml
+[model]
+base_url = "http://127.0.0.1:30000/v1"
+model = "Qwen/Qwen2.5-Coder-7B-Instruct"
+```
+
+See `examples/config.sglang.toml` for a full config.
+
+## Native Tool Calls
+
+By default, Qodex instructs the model to emit tool requests as inline JSON inside the chat text (prompt-based tool calling). This works reliably across all backends and models.
+
+When the backend and model support it, Qodex can use the OpenAI-native `tools` parameter and `tool_calls` response format instead. To enable:
+
+```toml
+[agent]
+tool_calls = "native"
+```
+
+In native mode:
+- Tool definitions are sent via the API `tools` parameter.
+- The model's tool calls arrive as structured `tool_calls` in the response.
+- Tool results are returned as `role: "tool"` messages.
+- The system prompt does not include JSON formatting instructions.
+- Backends with proper function-calling training (e.g. Qwen 2.5+ with vLLM) produce more reliable tool calls.
+
+If the model does not return native tool calls or you see worse behavior, fall back to prompt mode:
+
+```toml
+[agent]
+tool_calls = "prompt"
+```
+
+Not all backends implement `tools` parameter support equally. Test with your specific backend and model combination. Streaming is disabled when native tool calls are in use.
+
 ## Troubleshooting
 
 ### Qodex Cannot Connect To The Model
@@ -274,6 +376,54 @@ Example:
 
 ```text
 Do not run that command. Explain why it is needed and propose a narrower command.
+```
+
+## Version Command
+
+```sh
+./qodex version
+```
+
+Prints the version, git commit hash, and build timestamp. Set via `-ldflags` at build time; a dev build shows `version dev`.
+
+## Shell Completions
+
+```sh
+# Bash
+source <(./qodex completion bash)
+# To load permanently:
+echo "source <(./qodex completion bash)" >> ~/.bashrc
+
+# Zsh
+source <(./qodex completion zsh)
+# To load permanently:
+echo "source <(./qodex completion zsh)" >> ~/.zshrc
+
+# Fish
+./qodex completion fish > ~/.config/fish/completions/qodex.fish
+
+# PowerShell
+./qodex completion powershell | Out-String | Invoke-Expression
+```
+
+## Debug Mode
+
+For troubleshooting, pass `--debug <file>` to any command:
+
+```sh
+./qodex --debug /tmp/qodex.log run "debug this issue"
+./qodex --debug /tmp/qodex.log chat
+```
+
+The log file captures:
+- Agent loop events (tool calls, model responses, errors).
+- Panic recovery information.
+- Startup configuration.
+
+Check the log after an issue:
+
+```sh
+cat /tmp/qodex.log
 ```
 
 ## Privacy Model

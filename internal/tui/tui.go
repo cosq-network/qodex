@@ -39,6 +39,7 @@ type Model struct {
 	streamBuffer strings.Builder
 
 	projectFiles []string
+	filesLoaded  bool
 	matches      []string
 	matchIdx     int
 	autoShow     bool
@@ -59,6 +60,8 @@ type approvalPrompt struct {
 	req   agent.ApprovalRequest
 	reply chan bool
 }
+
+type filesLoadedMsg []string
 
 type spinnerTickMsg spinner.TickMsg
 
@@ -116,6 +119,8 @@ func newModel(a *agent.Agent, messages []store.Message, autoApprove bool) Model 
 			history = append(history, "", userStyle.Render("You:"), msg.Content)
 		case "assistant":
 			history = append(history, "", aiStyle.Render("Qodex:"), msg.Content)
+		case "tool":
+			history = append(history, toolStyle.Render(compact(msg.Content, 500)))
 		}
 	}
 
@@ -138,8 +143,6 @@ func newModel(a *agent.Agent, messages []store.Message, autoApprove bool) Model 
 
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(spinnerStyle))
 
-	files := listProjectFiles(a.ProjectRoot())
-
 	return Model{
 		agent:        a,
 		input:        ta,
@@ -150,13 +153,13 @@ func newModel(a *agent.Agent, messages []store.Message, autoApprove bool) Model 
 		events:       events,
 		approvals:    approvals,
 		streamCh:     streamCh,
-		projectFiles: files,
+		projectFiles: nil,
 		matchIdx:     -1,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(textarea.Blink, m.spinner.Tick, waitForEvent(m.events), waitForApproval(m.approvals), waitForStream(m.streamCh))
+	return tea.Batch(textarea.Blink, m.spinner.Tick, waitForEvent(m.events), waitForApproval(m.approvals), waitForStream(m.streamCh), loadProjectFiles(m.agent.ProjectRoot()))
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -250,6 +253,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			)
 		}
 
+	case filesLoadedMsg:
+		m.projectFiles = []string(msg)
+		m.filesLoaded = true
+		return m, nil
+
 	case spinner.TickMsg:
 		if m.busy {
 			var cmd tea.Cmd
@@ -298,8 +306,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.lastErr = msg.err.Error()
 			m.history = append(m.history, errorStyle.Render("Error: "+msg.err.Error()))
-		} else if finalText != "" {
+		} else {
 			m.lastErr = ""
+			if finalText == "" {
+				finalText = "(empty response)"
+			}
 			m.history = append(m.history, finalText)
 		}
 		m.refresh()
@@ -361,6 +372,9 @@ func (m *Model) refresh() {
 }
 
 func (m *Model) updateAutocomplete() {
+	if !m.filesLoaded || m.projectFiles == nil {
+		return
+	}
 	val := m.input.Value()
 	query := extractAutoQuery(val)
 	if query == "" {
@@ -371,7 +385,7 @@ func (m *Model) updateAutocomplete() {
 		return
 	}
 	m.autoQuery = query
-	m.matches = fuzzyFind(m.projectFiles, query)
+	m.matches = matchFiles(m.projectFiles, query)
 	if len(m.matches) > 10 {
 		m.matches = m.matches[:10]
 	}
@@ -437,6 +451,12 @@ func (a tuiApprover) Approve(req agent.ApprovalRequest) bool {
 		}
 	case <-time.After(approvalTimeout):
 		return false
+	}
+}
+
+func loadProjectFiles(root string) tea.Cmd {
+	return func() tea.Msg {
+		return filesLoadedMsg(listProjectFiles(root))
 	}
 }
 
@@ -523,7 +543,7 @@ func extractAutoQuery(s string) string {
 	return strings.TrimSpace(after[:end])
 }
 
-func fuzzyFind(files []string, query string) []string {
+func matchFiles(files []string, query string) []string {
 	if query == "" {
 		return nil
 	}

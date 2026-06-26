@@ -8,10 +8,10 @@ The intended runtime is `llama.cpp`, not Ollama. Other OpenAI-compatible backend
 
 The repository includes a fully featured coding agent with:
 
-- Cobra CLI commands: `init`, `config`, `chat`, `run`, `doctor`, `skills list`, `skills show`, `sessions list`, `sessions resume`, and `sessions export`.
+- Cobra CLI commands: `init`, `config`, `chat`, `run`, `review`, `doctor`, `setup`, `reset`, `skills list`, `skills show`, `sessions list`, `sessions resume`, `sessions export`, `version`, and `completion`.
 - Bubble Tea terminal chat UI with streaming token rendering, inline diff preview, spinner, error panel, and multi-line input with `@` file autocomplete.
 - OpenAI-compatible `/v1/chat/completions` client with SSE streaming and capability detection.
-- Prompt-based JSON tool calling with validation repair loop.
+- Prompt-based JSON tool calling with validation repair loop and optional native OpenAI `tools`/`tool_calls` support.
 - Built-in tools: `list_files`, `read_file`, `search_text`, `write_file`, `write_patch`, `run_command`, `git_status`, `git_diff`, `run_script` (pre-approved skill scripts), `run_tests`, `run_formatter`, `review_changes`, `project_index`, `lsp_diagnostics`, `lsp_definition`, and `lsp_find_references`.
 - Skill system: `skill.toml` metadata (triggers, allowed_tools, context_budget, scripts), model-assisted skill routing (`agent.skill_routing`), keyword/heuristic selection, section-aware context slicing, and pre-approved script policy with provenance tracking.
 - SQLite session/tool event storage with WAL mode, migrations, and approval persistence.
@@ -47,6 +47,9 @@ The repository includes a fully featured coding agent with:
 - [User Guide](docs/user-guide.md)
 - [Security Model](docs/security-model.md)
 - [Roadmap](docs/roadmap.md)
+- [llama.cpp Setup Guide](docs/llama-cpp-setup.md)
+- [Release Management](docs/release-management.md)
+- [Example Configs](examples/)
 
 ## Recommended Initial Stack
 
@@ -64,10 +67,44 @@ Default model family: Qwen Coder instruct
 ## Build
 
 ```sh
-go build ./cmd/qodex
+go build -ldflags="-X main.version=0.1.0 -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" ./cmd/qodex
 ```
 
-This creates a local `./qodex` binary.
+This creates a local `./qodex` binary with version metadata.
+
+To verify the build:
+
+```sh
+./qodex version
+```
+
+### Cross-platform builds
+
+```sh
+make build-all
+```
+
+Produces binaries for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, and windows/amd64 in `build/`.
+
+## Install
+
+### From source
+
+```sh
+make install
+```
+
+### Install script (from GitHub Releases)
+
+```sh
+curl -fsSL https://github.com/benoybose/qodex/raw/main/scripts/install.sh | sh
+```
+
+### Homebrew
+
+```sh
+brew install benoybose/qodex/qodex
+```
 
 ## Runtime Shape
 
@@ -108,6 +145,7 @@ The CLI should treat this as an OpenAI-compatible base URL and should not requir
 ## Quick Start
 
 ```sh
+./qodex version
 ./qodex init
 ./qodex doctor
 ./qodex config list
@@ -116,6 +154,9 @@ The CLI should treat this as an OpenAI-compatible base URL and should not requir
 ./qodex sessions list
 ./qodex sessions resume <id>
 ./qodex sessions export <id>
+./qodex reset
+./qodex reset --all
+./qodex completion bash > /tmp/qodex-completion.sh
 ```
 
 For prompts that may write files or run commands:
