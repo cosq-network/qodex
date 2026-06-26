@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -127,7 +128,11 @@ func (s *Store) GetArtifact(ctx context.Context, id int64) (*OutputArtifact, err
 	if err := row.Scan(&a.ID, &a.SessionID, &a.ToolCallID, &a.ToolName, &a.Summary, &a.Content, &a.ContentType, &a.Size, &created); err != nil {
 		return nil, err
 	}
-	a.CreatedAt, _ = time.Parse(time.RFC3339, created)
+	if t, parseErr := time.Parse(time.RFC3339, created); parseErr != nil {
+		fmt.Fprintf(os.Stderr, "[qodex] failed to parse artifact created_at: %v\n", parseErr)
+	} else {
+		a.CreatedAt = t
+	}
 	return &a, nil
 }
 
@@ -172,7 +177,10 @@ func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 		if err := rows.Scan(&id, &title, &updated); err != nil {
 			return nil, err
 		}
-		t, _ := time.Parse(time.RFC3339, updated)
+		t, parseErr := time.Parse(time.RFC3339, updated)
+		if parseErr != nil {
+			fmt.Fprintf(os.Stderr, "[qodex] failed to parse session updated_at: %v\n", parseErr)
+		}
 		out = append(out, Session{ID: id, Title: title, UpdatedAt: t})
 	}
 	return out, rows.Err()
@@ -185,7 +193,10 @@ func (s *Store) GetSession(ctx context.Context, id int64) (Session, error) {
 	if err := row.Scan(&sessionID, &title, &updated); err != nil {
 		return Session{}, err
 	}
-	t, _ := time.Parse(time.RFC3339, updated)
+	t, parseErr := time.Parse(time.RFC3339, updated)
+	if parseErr != nil {
+		fmt.Fprintf(os.Stderr, "[qodex] failed to parse session updated_at: %v\n", parseErr)
+	}
 	return Session{ID: sessionID, Title: title, UpdatedAt: t}, nil
 }
 
@@ -211,7 +222,11 @@ func (s *Store) ListToolCalls(ctx context.Context, sessionID int64) ([]ToolCallR
 			&resultID, &resultToolCallID, &resultOutput, &resultError, &resultCreated); err != nil {
 			return nil, err
 		}
-		r.CreatedAt, _ = time.Parse(time.RFC3339, created)
+		if t, parseErr := time.Parse(time.RFC3339, created); parseErr != nil {
+			fmt.Fprintf(os.Stderr, "[qodex] failed to parse tool call created_at: %v\n", parseErr)
+		} else {
+			r.CreatedAt = t
+		}
 		if resultID.Valid {
 			r.Result = &ToolResultRecord{
 				ID:        resultID.Int64,
@@ -219,7 +234,11 @@ func (s *Store) ListToolCalls(ctx context.Context, sessionID int64) ([]ToolCallR
 				Output:    resultOutput.String,
 				Error:     resultError.String,
 			}
-			r.Result.CreatedAt, _ = time.Parse(time.RFC3339, resultCreated.String)
+			if t, parseErr := time.Parse(time.RFC3339, resultCreated.String); parseErr != nil {
+				fmt.Fprintf(os.Stderr, "[qodex] failed to parse tool result created_at: %v\n", parseErr)
+			} else {
+				r.Result.CreatedAt = t
+			}
 		}
 		out = append(out, r)
 	}
@@ -254,7 +273,10 @@ func (s *Store) ListMessages(ctx context.Context, sessionID int64) ([]Message, e
 		if err := rows.Scan(&role, &content, &created); err != nil {
 			return nil, err
 		}
-		t, _ := time.Parse(time.RFC3339, created)
+		t, parseErr := time.Parse(time.RFC3339, created)
+		if parseErr != nil {
+			fmt.Fprintf(os.Stderr, "[qodex] failed to parse message created_at: %v\n", parseErr)
+		}
 		out = append(out, Message{Role: role, Content: content, CreatedAt: t})
 	}
 	return out, rows.Err()

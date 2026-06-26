@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 type FileEntry struct {
@@ -30,6 +31,7 @@ type SymbolEntry struct {
 type ProjectIndex struct {
 	files   []FileEntry
 	symbols []SymbolEntry
+	builtAt time.Time
 }
 
 var funcRe = map[string]*regexp.Regexp{
@@ -72,7 +74,7 @@ func langFromExt(path string) string {
 }
 
 func NewProjectIndex(root string) *ProjectIndex {
-	idx := &ProjectIndex{}
+	idx := &ProjectIndex{builtAt: time.Now()}
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -209,10 +211,21 @@ func (idx *ProjectIndex) Summary() string {
 	return b.String()
 }
 
+func (idx *ProjectIndex) RebuildIfStale(root string, maxAge time.Duration) {
+	if time.Since(idx.builtAt) <= maxAge {
+		return
+	}
+	*idx = *NewProjectIndex(root)
+}
+
 func (r *Registry) projectIndex(ctx context.Context, raw json.RawMessage) (Result, error) {
+	r.mu.Lock()
 	if r.index == nil {
 		r.index = NewProjectIndex(r.root)
+	} else {
+		r.index.RebuildIfStale(r.root, 30*time.Second)
 	}
+	r.mu.Unlock()
 	var args struct {
 		Query       string `json:"query"`
 		Symbol      string `json:"symbol"`

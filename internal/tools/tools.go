@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"sync"
 )
 
 type Tool struct {
@@ -32,6 +33,7 @@ type Registry struct {
 	root  string
 	tools map[string]Tool
 	index *ProjectIndex
+	mu    sync.Mutex
 }
 
 func NewRegistry(projectRoot string) *Registry {
@@ -303,7 +305,9 @@ func (r *Registry) listFiles(ctx context.Context, raw json.RawMessage) (Result, 
 		Path       string `json:"path"`
 		MaxResults int    `json:"max_results"`
 	}
-	_ = json.Unmarshal(raw, &args)
+	if err := json.Unmarshal(raw, &args); err != nil {
+		fmt.Fprintf(os.Stderr, "[qodex] list_files: invalid arguments, using defaults: %v\n", err)
+	}
 	if args.MaxResults <= 0 {
 		args.MaxResults = 200
 	}
@@ -762,10 +766,7 @@ func (r *Registry) runTests(ctx context.Context, raw json.RawMessage) (Result, e
 	default:
 		return Result{}, fmt.Errorf("unsupported test framework %q; try go, pytest, or jest", args.Framework)
 	}
-
-	_ = summary
-	_ = content
-	return Result{}, fmt.Errorf("no test command could be constructed")
+	return Result{}, fmt.Errorf("unreachable: all framework cases return")
 }
 
 func hasFile(root, name string) bool {
@@ -912,7 +913,9 @@ func (r *Registry) reviewChanges(ctx context.Context, raw json.RawMessage) (Resu
 	var args struct {
 		Scope string `json:"scope"`
 	}
-	_ = json.Unmarshal(raw, &args)
+	if err := json.Unmarshal(raw, &args); err != nil {
+		fmt.Fprintf(os.Stderr, "[qodex] review_changes: invalid arguments, using defaults: %v\n", err)
+	}
 	if args.Scope == "" {
 		args.Scope = "all"
 	}

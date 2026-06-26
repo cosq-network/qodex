@@ -50,7 +50,7 @@ The `--yes` flag and `approval.auto_approve = true` bypass prompts. These modes 
 - Path validation protects Qodex's built-in file tools, not arbitrary commands run through `run_command`.
 - Symlink handling is root-relative but not a full sandbox. A shell command can still follow symlinks according to normal OS rules.
 - The TUI approval panel is intentionally minimal. Rich diff rendering before approval is still planned.
-- Qodex does not yet persist approval decisions as first-class records.
+- Approval decisions are persisted as first-class records in the SQLite store, including the tool name, kind, summary, and approval status. Persistence failures are logged to stderr but do not block agent execution.
 
 ## Recommended Usage
 

@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -170,7 +172,9 @@ func runCmd(cfgPath *string, yes *bool) *cobra.Command {
 			}
 			defer rt.Close()
 
-			ctx, cancel := context.WithTimeout(cmd.Context(), 20*time.Minute)
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			ctx, cancel := context.WithTimeout(ctx, 20*time.Minute)
 			defer cancel()
 
 			result, err := rt.Agent.Run(ctx, args[0])
@@ -463,7 +467,9 @@ func reviewCmd(cfgPath *string, yes *bool) *cobra.Command {
 			}
 			defer rt.Close()
 
-			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Minute)
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 			defer cancel()
 			result, err := rt.Agent.Run(ctx, reviewPrompt)
 			if err != nil {

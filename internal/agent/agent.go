@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -165,7 +166,9 @@ func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
 		}
 	}
 	a.messages = append(a.messages, model.Message{Role: "user", Content: prompt})
-	_ = a.store.AddMessage(ctx, a.sessionID, "user", prompt)
+	if err := a.store.AddMessage(ctx, a.sessionID, "user", prompt); err != nil {
+		a.logError("failed to persist user message: %v", err)
+	}
 
 	for step := 0; step < a.maxSteps; step++ {
 		content, err := a.chat(ctx)
@@ -188,7 +191,9 @@ func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
 			continue
 		}
 		a.messages = append(a.messages, model.Message{Role: "assistant", Content: content})
-		_ = a.store.AddMessage(ctx, a.sessionID, "assistant", content)
+		if err := a.store.AddMessage(ctx, a.sessionID, "assistant", content); err != nil {
+			a.logError("failed to persist assistant message: %v", err)
+		}
 		return content, nil
 	}
 	return "", fmt.Errorf("agent stopped after %d steps", a.maxSteps)
@@ -401,7 +406,10 @@ func (a *Agent) executeTool(ctx context.Context, call toolCall) (string, error) 
 	if !ok {
 		return "", fmt.Errorf("unknown tool: %s", call.Name)
 	}
-	callID, _ := a.store.AddToolCall(ctx, a.sessionID, call.Name, string(call.Arguments), "requested")
+	callID, err := a.store.AddToolCall(ctx, a.sessionID, call.Name, string(call.Arguments), "requested")
+	if err != nil {
+		a.logError("failed to persist tool call: %v", err)
+	}
 
 	a.planState.ActionsTaken = append(a.planState.ActionsTaken, call.Name+" "+string(call.Arguments))
 	if call.Name == "read_file" {
@@ -425,12 +433,18 @@ func (a *Agent) executeTool(ctx context.Context, call toolCall) (string, error) 
 		approved := a.approver != nil && a.approver.Approve(ApprovalRequest{Kind: effect, Summary: summary, Diff: diff})
 		if !approved {
 			a.emit(Event{Type: "approval_denied", Tool: call.Name, Effect: effect, Summary: summary})
-			_ = a.store.AddToolResult(ctx, callID, "", "approval denied")
-			_ = a.store.AddApproval(ctx, a.sessionID, callID, call.Name, effect, summary, false)
+			if err := a.store.AddToolResult(ctx, callID, "", "approval denied"); err != nil {
+				a.logError("failed to persist tool result: %v", err)
+			}
+			if err := a.store.AddApproval(ctx, a.sessionID, callID, call.Name, effect, summary, false); err != nil {
+				a.logError("failed to persist approval: %v", err)
+			}
 			return `{"ok":false,"summary":"approval denied"}`, nil
 		}
 		a.emit(Event{Type: "approval_approved", Tool: call.Name, Effect: effect, Summary: summary})
-		_ = a.store.AddApproval(ctx, a.sessionID, callID, call.Name, effect, summary, true)
+		if err := a.store.AddApproval(ctx, a.sessionID, callID, call.Name, effect, summary, true); err != nil {
+			a.logError("failed to persist approval: %v", err)
+		}
 	}
 
 	res, err := tool.Execute(ctx, call.Arguments)
@@ -444,12 +458,17 @@ func (a *Agent) executeTool(ctx context.Context, call toolCall) (string, error) 
 			res.Content = fmt.Sprintf("[Output stored as artifact #%d. Summary: %s]", artifactID, summary)
 		}
 	}
-	raw, _ := json.Marshal(res)
+	raw, marshalErr := json.Marshal(res)
+	if marshalErr != nil {
+		a.logError("failed to marshal tool result: %v", marshalErr)
+	}
 	errText := ""
 	if err != nil {
 		errText = err.Error()
 	}
-	_ = a.store.AddToolResult(ctx, callID, string(raw), errText)
+	if err := a.store.AddToolResult(ctx, callID, string(raw), errText); err != nil {
+		a.logError("failed to persist tool result: %v", err)
+	}
 	if err != nil {
 		a.emit(Event{Type: "tool_failed", Tool: call.Name, Effect: effect, Summary: res.Summary, Error: err.Error()})
 	} else {
@@ -491,14 +510,19 @@ func (a *Agent) executeScript(ctx context.Context, call toolCall) (string, error
 		return "", fmt.Errorf("no script matching %q found in active skills", args.Description)
 	}
 
-	callID, _ := a.store.AddToolCall(ctx, a.sessionID, "run_script", string(call.Arguments), "approved")
+	callID, err := a.store.AddToolCall(ctx, a.sessionID, "run_script", string(call.Arguments), "approved")
+	if err != nil {
+		a.logError("failed to persist tool call: %v", err)
+	}
 
 	effect := "shell"
 	summary := fmt.Sprintf("run_script %q (from skill %q)", found.Description, skillName)
 	a.emit(Event{Type: "tool_requested", Tool: "run_script", Effect: effect, Summary: summary})
 	a.emit(Event{Type: "approval_requested", Tool: "run_script", Effect: effect, Summary: summary, Detail: "pre-approved script: " + found.Command})
 	a.emit(Event{Type: "approval_approved", Tool: "run_script", Effect: effect, Summary: summary})
-	_ = a.store.AddApproval(ctx, a.sessionID, callID, "run_script", effect, summary, true)
+	if err := a.store.AddApproval(ctx, a.sessionID, callID, "run_script", effect, summary, true); err != nil {
+		a.logError("failed to persist approval: %v", err)
+	}
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", found.Command)
 	cmd.Dir = a.cfg.ProjectRoot
@@ -515,18 +539,27 @@ func (a *Agent) executeScript(ctx context.Context, call toolCall) (string, error
 			"provenance": fmt.Sprintf("skill:%s/script:%s", skillName, found.Description),
 		},
 	}
-	raw, _ := json.Marshal(result)
+	raw, marshalErr := json.Marshal(result)
+	if marshalErr != nil {
+		a.logError("failed to marshal tool result: %v", marshalErr)
+	}
 	errText := ""
 	if err != nil {
 		errText = err.Error()
 	}
-	_ = a.store.AddToolResult(ctx, callID, string(raw), errText)
+	if err := a.store.AddToolResult(ctx, callID, string(raw), errText); err != nil {
+		a.logError("failed to persist tool result: %v", err)
+	}
 	if err != nil {
 		a.emit(Event{Type: "tool_failed", Tool: "run_script", Effect: effect, Summary: result.Summary, Error: err.Error()})
 	} else {
 		a.emit(Event{Type: "tool_completed", Tool: "run_script", Effect: effect, Summary: result.Summary})
 	}
 	return string(raw), nil
+}
+
+func (a *Agent) logError(format string, args ...interface{}) {
+	fmt.Fprintf(os.Stderr, "[qodex] "+format+"\n", args...)
 }
 
 func (a *Agent) emit(event Event) {

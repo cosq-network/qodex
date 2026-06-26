@@ -19,6 +19,8 @@ import (
 	"github.com/benoybose/qodex/internal/store"
 )
 
+var approvalTimeout = 30 * time.Second
+
 type Model struct {
 	agent        *agent.Agent
 	input        textarea.Model
@@ -424,9 +426,18 @@ func (a tuiApprover) Approve(req agent.ApprovalRequest) bool {
 	if a.autoApprove {
 		return true
 	}
-	reply := make(chan bool)
-	a.prompts <- approvalPrompt{req: req, reply: reply}
-	return <-reply
+	reply := make(chan bool, 1)
+	select {
+	case a.prompts <- approvalPrompt{req: req, reply: reply}:
+		select {
+		case result := <-reply:
+			return result
+		case <-time.After(approvalTimeout):
+			return false
+		}
+	case <-time.After(approvalTimeout):
+		return false
+	}
 }
 
 func waitForEvent(events <-chan agent.Event) tea.Cmd {

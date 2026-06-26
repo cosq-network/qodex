@@ -25,7 +25,7 @@ type Client struct {
 
 func NewClient(baseURL, model string) *Client {
 	return &Client{
-		BaseURL: strings.TrimRight(baseURL, "/"),
+		BaseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
 		Model:   model,
 		HTTPClient: &http.Client{
 			Timeout: 10 * time.Minute,

@@ -272,3 +272,24 @@ func TestContextCompactedEvent(t *testing.T) {
 		t.Fatalf("expected compacted in render: %q", rendered)
 	}
 }
+
+func TestTUIApproverTimeoutWhenNoReader(t *testing.T) {
+	orig := approvalTimeout
+	approvalTimeout = 10 * time.Millisecond
+	defer func() { approvalTimeout = orig }()
+
+	prompts := make(chan approvalPrompt, 1)
+	app := tuiApprover{autoApprove: false, prompts: prompts}
+
+	got := app.Approve(agent.ApprovalRequest{Kind: "write", Summary: "test"})
+	if got {
+		t.Fatal("expected Approve to timeout and return false")
+	}
+}
+
+func TestTUIApproverAutoApprove(t *testing.T) {
+	app := tuiApprover{autoApprove: true}
+	if !app.Approve(agent.ApprovalRequest{Kind: "write", Summary: "test"}) {
+		t.Fatal("expected auto-approve to return true")
+	}
+}
