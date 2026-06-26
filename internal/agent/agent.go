@@ -53,6 +53,7 @@ type Agent struct {
 	allowedTools   []string
 	selectedSkills []skills.Skill
 	debugWriter    io.Writer
+	probeCancel    context.CancelFunc
 }
 
 type ApprovalRequest struct {
@@ -127,6 +128,16 @@ func (a *Agent) SetStreamCallback(cb func(string)) {
 
 func (a *Agent) SetStreaming(enabled bool) {
 	a.streaming = enabled
+}
+
+func (a *Agent) SetProbeCancel(cancel context.CancelFunc) {
+	a.probeCancel = cancel
+}
+
+func (a *Agent) CancelProbe() {
+	if a.probeCancel != nil {
+		a.probeCancel()
+	}
 }
 
 func (a *Agent) Run(ctx context.Context, prompt string) (result string, err error) {

@@ -50,6 +50,7 @@ type Client struct {
 	BaseURL    string
 	Model      string
 	HTTPClient *http.Client
+	DebugLog   func(string, ...interface{})
 }
 
 func NewClient(baseURL, model string) *Client {
@@ -57,9 +58,13 @@ func NewClient(baseURL, model string) *Client {
 		BaseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
 		Model:   model,
 		HTTPClient: &http.Client{
-			Timeout: 10 * time.Minute,
+			Timeout: 5 * time.Minute,
 		},
 	}
+}
+
+func (c *Client) SetDebugLog(fn func(string, ...interface{})) {
+	c.DebugLog = fn
 }
 
 func (c *Client) Check(ctx context.Context) error {
@@ -108,7 +113,7 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, temperature
 		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
 
-	ch := make(chan StreamResult, 10)
+ch := make(chan StreamResult, 10)
 	go func() {
 		defer resp.Body.Close()
 		defer close(ch)
@@ -124,12 +129,14 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, temperature
 			}
 			var chunk streamChunk
 			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+				if c.DebugLog != nil {
+					c.DebugLog("SSE parse error: %v (data: %s)", err, truncate(data, 100))
+				}
 				continue
 			}
 			if len(chunk.Choices) > 0 {
-				content := chunk.Choices[0].Delta.Content
 				select {
-				case ch <- StreamResult{Content: content}:
+				case ch <- StreamResult{Content: chunk.Choices[0].Delta.Content}:
 				case <-ctx.Done():
 					return
 				}
@@ -290,4 +297,11 @@ type streamChunk struct {
 			Content string `json:"content"`
 		} `json:"delta"`
 	} `json:"choices"`
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }

@@ -44,6 +44,8 @@ type Model struct {
 	matchIdx     int
 	autoShow     bool
 	autoQuery    string
+
+	onQuit func()
 }
 
 type responseMsg struct {
@@ -162,6 +164,11 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(textarea.Blink, m.spinner.Tick, waitForEvent(m.events), waitForApproval(m.approvals), waitForStream(m.streamCh), loadProjectFiles(m.agent.ProjectRoot()))
 }
 
+func (m Model) WithQuitCallback(cb func()) Model {
+	m.onQuit = cb
+	return m
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -182,6 +189,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.autoShow {
 				m.clearAutocomplete()
 				return m, nil
+			}
+			if m.onQuit != nil {
+				m.onQuit()
 			}
 			return m, tea.Quit
 

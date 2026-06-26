@@ -463,3 +463,94 @@ func TestChatWithToolsHTTPError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestChatStreamSSEParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher, _ := w.(http.Flusher)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+
+		data, _ := json.Marshal(streamChunk{
+			Choices: []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			}{
+				{Delta: struct {
+					Content string `json:"content"`
+				}{Content: "Hello"}},
+			},
+		})
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+
+		fmt.Fprintf(w, "data: {invalid json}\n\n")
+		flusher.Flush()
+
+		data, _ = json.Marshal(streamChunk{
+			Choices: []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			}{
+				{Delta: struct {
+					Content string `json:"content"`
+				}{Content: " World"}},
+			},
+		})
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+	defer srv.Close()
+
+	var logs []string
+	c := NewClient(srv.URL, "test-model")
+	c.SetDebugLog(func(format string, args ...interface{}) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	})
+
+	ctx := context.Background()
+	ch, err := c.ChatStream(ctx, []Message{{Role: "user", Content: "hi"}}, 0.7, 0.9)
+	if err != nil {
+		t.Fatalf("ChatStream failed: %v", err)
+	}
+
+	var got strings.Builder
+	for result := range ch {
+		if result.Err != nil {
+			t.Fatalf("stream error: %v", result.Err)
+		}
+		got.WriteString(result.Content)
+	}
+	if got.String() != "Hello World" {
+		t.Fatalf("got %q, want %q", got.String(), "Hello World")
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(logs))
+	}
+	if !strings.Contains(logs[0], "SSE parse error") {
+		t.Fatalf("expected log to contain SSE parse error, got %q", logs[0])
+	}
+}
+
+func TestSetDebugLog(t *testing.T) {
+	var called bool
+	c := NewClient("http://example.com", "test")
+	c.SetDebugLog(func(format string, args ...interface{}) {
+		called = true
+	})
+	c.DebugLog("test")
+	if !called {
+		t.Fatal("expected debug log to be called")
+	}
+}
+
+func TestNewClientTimeout(t *testing.T) {
+	c := NewClient("http://example.com", "test")
+	if c.HTTPClient.Timeout != 5*time.Minute {
+		t.Fatalf("expected timeout 5m, got %v", c.HTTPClient.Timeout)
+	}
+}

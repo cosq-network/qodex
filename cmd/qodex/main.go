@@ -362,9 +362,9 @@ func chatCmd(cfgPath *string, yes *bool) *cobra.Command {
 
 			var model tui.Model
 			if rt.AutoApprove {
-				model = tui.NewAutoApproved(rt.Agent)
+				model = tui.NewAutoApproved(rt.Agent).WithQuitCallback(rt.Agent.CancelProbe)
 			} else {
-				model = tui.New(rt.Agent)
+				model = tui.New(rt.Agent).WithQuitCallback(rt.Agent.CancelProbe)
 			}
 			p := tea.NewProgram(model, tea.WithAltScreen())
 			_, err = p.Run()
@@ -507,9 +507,9 @@ func sessionsCmd(cfgPath *string, yes *bool) *cobra.Command {
 			}
 			var model tui.Model
 			if rt.AutoApprove {
-				model = tui.NewWithHistoryAutoApproved(rt.Agent, messages)
+				model = tui.NewWithHistoryAutoApproved(rt.Agent, messages).WithQuitCallback(rt.Agent.CancelProbe)
 			} else {
-				model = tui.NewWithHistory(rt.Agent, messages)
+				model = tui.NewWithHistory(rt.Agent, messages).WithQuitCallback(rt.Agent.CancelProbe)
 			}
 			p := tea.NewProgram(model, tea.WithAltScreen())
 			_, err = p.Run()
@@ -638,6 +638,13 @@ func buildRuntime(cfgPath string, yes bool, tuiMode bool, sessionID int64) (*run
 	})
 
 	client := model.NewClient(cfg.Model.BaseURL, cfg.Model.Model)
+	if debugLog != nil {
+		client.SetDebugLog(func(format string, args ...interface{}) {
+			ts := time.Now().UTC().Format(time.RFC3339)
+			fmt.Fprintf(debugLog, "%s ", ts)
+			fmt.Fprintf(debugLog, format+"\n", args...)
+		})
+	}
 	registry := tools.NewRegistry(cfg.ProjectRoot)
 	agt := agent.New(agent.Options{
 		Config:      cfg,
@@ -652,7 +659,7 @@ func buildRuntime(cfgPath string, yes bool, tuiMode bool, sessionID int64) (*run
 	})
 	if tuiMode {
 		probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer probeCancel()
+		agt.SetProbeCancel(probeCancel)
 		go func() {
 			caps := client.DetectCapabilities(probeCtx)
 			if caps.Streaming {
