@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -45,7 +46,8 @@ type Model struct {
 	autoShow     bool
 	autoQuery    string
 
-	onQuit func()
+	onQuit    func()
+	runCancel context.CancelFunc
 }
 
 type responseMsg struct {
@@ -185,6 +187,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "esc":
 			if m.pending != nil {
 				m.pending.reply <- false
+				m.pending = nil
+			}
+			if m.runCancel != nil {
+				m.runCancel()
+				m.runCancel = nil
 			}
 			if m.autoShow {
 				m.clearAutocomplete()
@@ -246,6 +253,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.busy {
 				return m, nil
 			}
+			if m.runCancel != nil {
+				m.runCancel()
+				m.runCancel = nil
+			}
 			prompt := strings.TrimSpace(m.input.Value())
 			if prompt == "" {
 				return m, nil
@@ -257,8 +268,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.history = append(m.history, "", userStyle.Render("You:"), prompt, "", aiStyle.Render("Qodex:"), "")
 			m.workingIndex = len(m.history) - 1
 			m.refresh()
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			m.runCancel = cancel
 			return m, tea.Batch(
-				runPrompt(m.agent, prompt),
+				runPrompt(m.agent, prompt, ctx),
 				m.spinner.Tick,
 			)
 		}
@@ -304,6 +317,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case responseMsg:
 		m.busy = false
+		if m.runCancel != nil {
+			m.runCancel()
+			m.runCancel = nil
+		}
 		finalText := msg.text
 		if m.streamBuffer.Len() > 0 {
 			finalText = m.streamBuffer.String()
@@ -432,10 +449,8 @@ func (m *Model) selectAutocomplete() {
 	m.clearAutocomplete()
 }
 
-func runPrompt(a *agent.Agent, prompt string) tea.Cmd {
+func runPrompt(a *agent.Agent, prompt string, ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-		defer cancel()
 		text, err := a.Run(ctx, prompt)
 		return responseMsg{prompt: prompt, text: text, err: err}
 	}
@@ -459,7 +474,7 @@ func (a tuiApprover) Approve(req agent.ApprovalRequest) bool {
 		case <-time.After(approvalTimeout):
 			return false
 		}
-	case <-time.After(approvalTimeout):
+	default:
 		return false
 	}
 }
@@ -534,7 +549,11 @@ func compact(s string, limit int) string {
 	if len(s) <= limit {
 		return s
 	}
-	return s[:limit] + "\n... truncated ..."
+	cut := limit
+	for !utf8.ValidString(s[:cut]) && cut > 0 {
+		cut--
+	}
+	return s[:cut] + "\n... truncated ..."
 }
 
 func extractAutoQuery(s string) string {
