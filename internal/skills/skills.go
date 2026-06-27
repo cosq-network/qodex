@@ -8,8 +8,14 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pelletier/go-toml/v2"
+)
+
+const (
+	maxKeywordSelectedSkills = 3
+	maxModelSelectedSkills   = 2
 )
 
 type Metadata struct {
@@ -61,7 +67,10 @@ func Discover(projectRoot string) ([]Skill, error) {
 			}
 			skill := Skill{Name: name, Path: skillPath, Content: string(content)}
 			if metaBytes, err := os.ReadFile(filepath.Join(skillPath, "skill.toml")); err == nil {
-				_ = toml.Unmarshal(metaBytes, &skill.Meta)
+				if err := toml.Unmarshal(metaBytes, &skill.Meta); err != nil {
+					fmt.Fprintf(os.Stderr, "[qodex] warning: skipping invalid skill.toml in %s: %v\n", skillPath, err)
+					skill.Meta = Metadata{}
+				}
 			}
 			byName[name] = skill
 		}
@@ -106,11 +115,11 @@ func Select(all []Skill, prompt string) []Skill {
 		return scoredSkills[i].score > scoredSkills[j].score
 	})
 
-	if len(scoredSkills) > 2 {
-		scoredSkills = scoredSkills[:2]
+	if len(scoredSkills) > maxKeywordSelectedSkills-1 {
+		scoredSkills = scoredSkills[:maxKeywordSelectedSkills-1]
 	}
 
-	result := make([]Skill, 0, 3)
+	result := make([]Skill, 0, maxKeywordSelectedSkills)
 	if project != nil {
 		result = append(result, *project)
 	}
@@ -243,7 +252,7 @@ Return an empty array if no skills are relevant. Do not include the "project" sk
 			if len(s.Meta.AllowedTools) > 0 {
 				anyRestrict = true
 			}
-			if len(out) < 2 {
+			if len(out) < maxModelSelectedSkills {
 				out = append(out, s)
 			}
 		}
@@ -268,6 +277,17 @@ Return an empty array if no skills are relevant. Do not include the "project" sk
 	return resultSkills, nil
 }
 
+func truncateUTF8(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	cut := limit
+	for !utf8.ValidString(s[:cut]) && cut > 0 {
+		cut--
+	}
+	return s[:cut]
+}
+
 func Render(skills []Skill, budget int) string {
 	if len(skills) == 0 {
 		return ""
@@ -282,7 +302,7 @@ func Render(skills []Skill, budget int) string {
 			skillBudget = skill.Meta.ContextBudget
 		}
 		if len(content) > skillBudget {
-			content = content[:skillBudget]
+			content = truncateUTF8(content, skillBudget)
 		}
 		used += len(content)
 		if used > budget {
@@ -319,9 +339,16 @@ func AllowedTools(selected []Skill) []string {
 }
 
 func Scripts(selected []Skill) []Script {
+	seen := map[string]bool{}
 	var out []Script
 	for _, skill := range selected {
-		out = append(out, skill.Meta.Scripts...)
+		for _, script := range skill.Meta.Scripts {
+			if seen[script.Description] {
+				continue
+			}
+			seen[script.Description] = true
+			out = append(out, script)
+		}
 	}
 	return out
 }
@@ -337,7 +364,7 @@ func splitSections(content string) (preamble string, sections []section) {
 	lines := strings.Split(content, "\n")
 	var current *section
 	for _, line := range lines {
-		if strings.HasPrefix(line, "##") {
+		if strings.HasPrefix(line, "## ") && !strings.HasPrefix(line, "### ") {
 			if current != nil {
 				sections = append(sections, *current)
 			}
@@ -423,7 +450,7 @@ func RenderSliced(skills []Skill, prompt string, budget int) string {
 				preambleLen = remaining
 			}
 			if preambleLen > 0 {
-				b.WriteString(preamble[:preambleLen])
+				b.WriteString(truncateUTF8(preamble, preambleLen))
 				b.WriteString("\n")
 				remaining -= preambleLen
 				used += preambleLen
@@ -451,7 +478,7 @@ func RenderSliced(skills []Skill, prompt string, budget int) string {
 					secLen = remaining
 				}
 				if secLen > 0 {
-					b.WriteString(secContent[:secLen])
+					b.WriteString(truncateUTF8(secContent, secLen))
 					b.WriteString("\n")
 					remaining -= secLen
 					used += secLen

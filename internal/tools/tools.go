@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/benoybose/qodex/internal/model"
 )
@@ -120,6 +121,9 @@ func (r *Registry) DiffPreview(name string, raw json.RawMessage) (string, error)
 			Patch string `json:"patch"`
 		}
 		if err := json.Unmarshal(raw, &args); err != nil {
+			return "", err
+		}
+		if err := validatePatchPaths(args.Patch); err != nil {
 			return "", err
 		}
 		return args.Patch, nil
@@ -491,7 +495,7 @@ func (r *Registry) writePatch(ctx context.Context, raw json.RawMessage) (Result,
 	cmd := exec.CommandContext(cctx, "git", "apply", "--whitespace=nowarn", "-")
 	cmd.Dir = r.root
 	cmd.Stdin = strings.NewReader(args.Patch)
-	out, err := cmd.CombinedOutput()
+	out, err := runWithKillStdin(cctx, cmd)
 	res := Result{
 		OK:      err == nil,
 		Summary: "Applied unified diff.",
@@ -543,7 +547,7 @@ func (r *Registry) runCommand(ctx context.Context, raw json.RawMessage) (Result,
 		summary = "Ran shell command: " + args.Command
 	}
 	cmd.Dir = r.root
-	out, err := cmd.CombinedOutput()
+	out, err := runWithKill(cctx, cmd)
 	res := Result{
 		OK:      err == nil,
 		Summary: summary,
@@ -577,7 +581,7 @@ func (r *Registry) git(ctx context.Context, command string) (Result, error) {
 	parts := strings.Fields(command)
 	cmd := exec.CommandContext(cctx, "git", parts...)
 	cmd.Dir = r.root
-	out, err := cmd.CombinedOutput()
+	out, err := runWithKill(cctx, cmd)
 	res := Result{OK: err == nil, Summary: "Ran git " + command, Content: truncate(string(out), 20000)}
 	if err != nil {
 		return res, err
@@ -590,11 +594,22 @@ func rejectDangerousShellCommand(command string) error {
 	dangerous := []string{
 		"rm -rf /",
 		"rm -fr /",
+		"rm -rf ~",
+		"rm -fr ~",
+		"rm -rf $home",
+		"rm -fr $home",
+		"rm -rf %userprofile%",
+		"rm -fr %userprofile%",
 		"sudo rm -rf",
 		"sudo rm -fr",
 		"mkfs",
 		"diskutil erase",
 		":(){ :|:& };:",
+		"curl |",
+		"wget |",
+		"eval ",
+		"remove-item -recurse -force c:\\",
+		"remove-item -rec -force c:\\",
 	}
 	for _, pattern := range dangerous {
 		if strings.Contains(normalized, pattern) {
@@ -720,11 +735,55 @@ func isNetworkArgv(argv []string) bool {
 	}
 }
 
+func runWithKill(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
+	type result struct {
+		out []byte
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, err := cmd.CombinedOutput()
+		done <- result{out: out, err: err}
+	}()
+	select {
+	case r := <-done:
+		return r.out, r.err
+	case <-ctx.Done():
+		cmd.Process.Kill()
+		<-done
+		return nil, ctx.Err()
+	}
+}
+
+func runWithKillStdin(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
+	type result struct {
+		out []byte
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, err := cmd.CombinedOutput()
+		done <- result{out: out, err: err}
+	}()
+	select {
+	case r := <-done:
+		return r.out, r.err
+	case <-ctx.Done():
+		cmd.Process.Kill()
+		<-done
+		return nil, ctx.Err()
+	}
+}
+
 func truncate(s string, limit int) string {
 	if len(s) <= limit {
 		return s
 	}
-	return s[:limit] + "\n... truncated ..."
+	cut := limit
+	for !utf8.ValidString(s[:cut]) && cut > 0 {
+		cut--
+	}
+	return s[:cut] + "\n... truncated ..."
 }
 
 func (r *Registry) runTests(ctx context.Context, raw json.RawMessage) (Result, error) {
@@ -758,69 +817,67 @@ func (r *Registry) runTests(ctx context.Context, raw json.RawMessage) (Result, e
 	summary := ""
 	var content string
 
-	switch args.Framework {
-	case "go":
-		argv := []string{"go", "test"}
-		if args.Pattern != "" {
-			argv = append(argv, args.Pattern)
-		}
-		if args.File != "" {
-			argv = append(argv, args.File)
-		}
-		cmd := exec.CommandContext(cctx, "go", argv[1:]...)
-		cmd.Dir = r.root
-		out, err := cmd.CombinedOutput()
-		summary = fmt.Sprintf("Ran go test %s", args.Pattern)
-		content = string(out)
-		if err != nil {
-			return Result{OK: false, Summary: "Tests failed", Content: truncate(content, 20000)}, err
-		}
-		return Result{OK: true, Summary: summary, Content: truncate(content, 20000), Metadata: map[string]interface{}{"shell": false, "network": false}}, nil
-
-	case "pytest", "python":
-		argv := []string{"python", "-m", "pytest"}
-		if args.Pattern != "" {
-			argv = append(argv, args.Pattern)
-		}
-		if args.File != "" {
-			argv = append(argv, args.File)
-		}
-		cmd := exec.CommandContext(cctx, "python", argv[1:]...)
-		cmd.Dir = r.root
-		out, err := cmd.CombinedOutput()
-		summary = fmt.Sprintf("Ran pytest %s", args.Pattern)
-		content = string(out)
-		if err != nil {
-			return Result{OK: false, Summary: "Tests failed", Content: truncate(content, 20000)}, err
-		}
-		return Result{OK: true, Summary: summary, Content: truncate(content, 20000), Metadata: map[string]interface{}{"shell": false, "network": false}}, nil
-
-	case "jest", "node":
-		detected := false
-		if hasFile(r.root, "package.json") {
-			argv := []string{"npx", "jest"}
+		switch args.Framework {
+		case "go":
+			argv := []string{"go", "test"}
 			if args.Pattern != "" {
 				argv = append(argv, args.Pattern)
 			}
 			if args.File != "" {
 				argv = append(argv, args.File)
 			}
-			cmd := exec.CommandContext(cctx, "npx", argv[1:]...)
+			cmd := exec.CommandContext(cctx, "go", argv[1:]...)
 			cmd.Dir = r.root
-			out, err := cmd.CombinedOutput()
-			summary = fmt.Sprintf("Ran jest %s", args.Pattern)
+			out, err := runWithKill(cctx, cmd)
+			summary = fmt.Sprintf("Ran go test %s", args.Pattern)
 			content = string(out)
 			if err != nil {
 				return Result{OK: false, Summary: "Tests failed", Content: truncate(content, 20000)}, err
 			}
-			detected = true
 			return Result{OK: true, Summary: summary, Content: truncate(content, 20000), Metadata: map[string]interface{}{"shell": false, "network": false}}, nil
-		}
-		if !detected {
-			return Result{}, fmt.Errorf("no supported test runner detected for framework %q", args.Framework)
+
+		case "pytest", "python":
+			argv := []string{"python", "-m", "pytest"}
+			if args.Pattern != "" {
+				argv = append(argv, args.Pattern)
+			}
+			if args.File != "" {
+				argv = append(argv, args.File)
+			}
+			cmd := exec.CommandContext(cctx, "python", argv[1:]...)
+			cmd.Dir = r.root
+			out, err := runWithKill(cctx, cmd)
+			summary = fmt.Sprintf("Ran pytest %s", args.Pattern)
+			content = string(out)
+			if err != nil {
+				return Result{OK: false, Summary: "Tests failed", Content: truncate(content, 20000)}, err
+			}
+			return Result{OK: true, Summary: summary, Content: truncate(content, 20000), Metadata: map[string]interface{}{"shell": false, "network": false}}, nil
+
+	case "jest", "node":
+		if hasFile(r.root, "package.json") {
+				argv := []string{"npx", "jest"}
+				if args.Pattern != "" {
+					argv = append(argv, args.Pattern)
+				}
+				if args.File != "" {
+					argv = append(argv, args.File)
+				}
+				cmd := exec.CommandContext(cctx, "npx", argv[1:]...)
+				cmd.Dir = r.root
+				out, err := runWithKill(cctx, cmd)
+				summary = fmt.Sprintf("Ran jest %s", args.Pattern)
+				content = string(out)
+			if err != nil {
+				return Result{OK: false, Summary: "Tests failed", Content: truncate(content, 20000)}, err
+			}
+			return Result{OK: true, Summary: summary, Content: truncate(content, 20000), Metadata: map[string]interface{}{"shell": false, "network": false}}, nil
 		}
 
 	default:
+		if args.Framework == "" {
+			return Result{}, fmt.Errorf("no supported test runner detected; try go, pytest, or jest")
+		}
 		return Result{}, fmt.Errorf("unsupported test framework %q; try go, pytest, or jest", args.Framework)
 	}
 	return Result{}, fmt.Errorf("unreachable: all framework cases return")
@@ -854,7 +911,7 @@ func detectProjectFramework(root string) string {
 	if hasFile(root, "package.json") || hasFile(root, "jest.config.js") || hasFile(root, "jest.config.ts") {
 		return "jest"
 	}
-	return "go"
+	return ""
 }
 
 func (r *Registry) runFormatter(ctx context.Context, raw json.RawMessage) (Result, error) {
@@ -950,7 +1007,7 @@ func (r *Registry) runFormatter(ctx context.Context, raw json.RawMessage) (Resul
 		summary = fmt.Sprintf("Ran %s on %s", args.Tool, workPath)
 	}
 
-	out, err := cmd.CombinedOutput()
+	out, err := runWithKill(cctx, cmd)
 	res := Result{
 		OK:      err == nil,
 		Summary: summary,
@@ -996,7 +1053,7 @@ func (r *Registry) reviewChanges(ctx context.Context, raw json.RawMessage) (Resu
 
 	cmd := exec.CommandContext(cctx, "git", diffArgs...)
 	cmd.Dir = r.root
-	diffOut, err := cmd.CombinedOutput()
+	diffOut, err := runWithKill(cctx, cmd)
 	if err != nil {
 		return Result{}, fmt.Errorf("git diff failed: %w", err)
 	}
@@ -1005,7 +1062,6 @@ func (r *Registry) reviewChanges(ctx context.Context, raw json.RawMessage) (Resu
 		return Result{OK: true, Summary: "No changes to review", Content: "No uncommitted changes found."}, nil
 	}
 
-	// Get changed files list
 	cmd2 := exec.CommandContext(cctx, "git", "diff", "--name-status")
 	if args.Scope == "staged" {
 		cmd2 = exec.CommandContext(cctx, "git", "diff", "--staged", "--name-status")
@@ -1015,12 +1071,11 @@ func (r *Registry) reviewChanges(ctx context.Context, raw json.RawMessage) (Resu
 		cmd2 = exec.CommandContext(cctx, "git", "diff", "HEAD", "--name-status")
 	}
 	cmd2.Dir = r.root
-	statusOut, _ := cmd2.CombinedOutput()
+	statusOut, _ := runWithKill(cctx, cmd2)
 
-	// Get git status for untracked
 	cmd3 := exec.CommandContext(cctx, "git", "status", "--short")
 	cmd3.Dir = r.root
-	statusShort, _ := cmd3.CombinedOutput()
+	statusShort, _ := runWithKill(cctx, cmd3)
 
 	b.WriteString("## Changed Files\n\n")
 	b.WriteString("```\n")

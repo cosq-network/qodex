@@ -360,14 +360,17 @@ func TestSplitSections(t *testing.T) {
 	if !strings.Contains(preamble, "Overview") {
 		t.Fatalf("preamble missing: %q", preamble)
 	}
-	if len(sections) != 3 {
-		t.Fatalf("expected 3 sections, got %d", len(sections))
+	if len(sections) != 2 {
+		t.Fatalf("expected 2 sections, got %d", len(sections))
 	}
 	if sections[0].heading != "## Section One" {
 		t.Fatalf("expected section one heading, got %q", sections[0].heading)
 	}
-	if sections[2].heading != "## Section Two" {
-		t.Fatalf("expected section two heading, got %q", sections[2].heading)
+	if !strings.Contains(sections[0].body, "Subsection") {
+		t.Fatalf("expected subsection in section one body, got %q", sections[0].body)
+	}
+	if sections[1].heading != "## Section Two" {
+		t.Fatalf("expected section two heading, got %q", sections[1].heading)
 	}
 }
 
