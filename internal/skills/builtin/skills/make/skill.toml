@@ -1,0 +1,22 @@
+name = "make"
+description = "Build and manage Makefile-driven projects."
+version = "0.1.0"
+
+triggers = [
+  "make",
+  "makefile",
+  "gnu make",
+  "build target",
+  "make build"
+]
+
+allowed_tools = [
+  "make_build",
+  "read_file",
+  "search_text",
+  "list_files",
+  "run_command",
+  "review_changes"
+]
+
+context_budget_tokens = 4000

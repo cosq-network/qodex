@@ -1,0 +1,22 @@
+name = "wget"
+description = "Download files with wget using structured arguments."
+version = "0.1.0"
+
+triggers = [
+  "wget",
+  "download",
+  "mirror",
+  "recursive download",
+  "fetch file"
+]
+
+allowed_tools = [
+  "wget",
+  "read_file",
+  "search_text",
+  "list_files",
+  "run_command",
+  "review_changes"
+]
+
+context_budget_tokens = 4000

@@ -1,0 +1,36 @@
+name = "archives"
+description = "Create, extract, and inspect ar, tar, and zip archives."
+version = "0.1.0"
+
+triggers = [
+  "archive",
+  "tar",
+  "zip",
+  "ar",
+  "gzip",
+  "bzip2",
+  "xz",
+  "compress",
+  "extract",
+  "pack",
+  "unpack"
+]
+
+allowed_tools = [
+  "ar_create",
+  "ar_extract",
+  "ar_list",
+  "tar_create",
+  "tar_extract",
+  "tar_list",
+  "zip_create",
+  "zip_extract",
+  "zip_list",
+  "read_file",
+  "search_text",
+  "list_files",
+  "run_command",
+  "review_changes"
+]
+
+context_budget_tokens = 4000

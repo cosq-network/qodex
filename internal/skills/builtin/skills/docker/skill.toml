@@ -1,0 +1,27 @@
+name = "docker"
+description = "Build and run Docker containers."
+version = "0.1.0"
+
+triggers = [
+  "docker",
+  "container",
+  "image",
+  "dockerfile",
+  "docker-compose",
+  "compose",
+  "podman"
+]
+
+allowed_tools = [
+  "docker_build",
+  "docker_run",
+  "docker_compose_up",
+  "docker_compose_down",
+  "read_file",
+  "search_text",
+  "list_files",
+  "run_command",
+  "review_changes"
+]
+
+context_budget_tokens = 4000

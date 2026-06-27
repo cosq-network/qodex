@@ -1,0 +1,28 @@
+name = "nuget"
+description = "Manage NuGet packages for .NET projects."
+version = "0.1.0"
+
+triggers = [
+  "nuget",
+  "package",
+  "restore",
+  "install package",
+  "packages.config",
+  "nuget.org",
+  "dependencies"
+]
+
+allowed_tools = [
+  "nuget_restore",
+  "nuget_install",
+  "dotnet_run",
+  "dotnet_build",
+  "dotnet_test",
+  "read_file",
+  "search_text",
+  "list_files",
+  "run_command",
+  "review_changes"
+]
+
+context_budget_tokens = 4000

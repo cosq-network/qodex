@@ -1,0 +1,25 @@
+name = "node"
+description = "Run Node.js scripts and evaluate inline JavaScript."
+version = "0.1.0"
+
+triggers = [
+  "node",
+  "node.js",
+  "javascript",
+  "js",
+  "run script",
+  "eval"
+]
+
+allowed_tools = [
+  "node_run",
+  "npm_command",
+  "npx_command",
+  "read_file",
+  "search_text",
+  "list_files",
+  "run_command",
+  "review_changes"
+]
+
+context_budget_tokens = 4000

@@ -2,8 +2,10 @@ package skills
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -38,7 +40,61 @@ type Skill struct {
 	Meta    Metadata
 }
 
+//go:embed builtin/skills/**/*
+var builtinFS embed.FS
+
+func discoverBuiltin() ([]Skill, error) {
+	if _, err := fs.Stat(builtinFS, "builtin/skills"); err != nil {
+		if os.IsNotExist(err) || err == fs.ErrNotExist {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []Skill
+	err := fs.WalkDir(builtinFS, "builtin/skills", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if path == "builtin/skills" {
+			return nil
+		}
+		name := filepath.Base(path)
+		relPath := "builtin/skills/" + name
+		skill, err := readEmbeddedSkill(builtinFS, relPath)
+		if err != nil {
+			return err
+		}
+		out = append(out, *skill)
+		return fs.SkipDir
+	})
+	return out, err
+}
+
+func readEmbeddedSkill(fsys fs.FS, relPath string) (*Skill, error) {
+	content, err := fs.ReadFile(fsys, relPath+"/SKILL.md")
+	if err != nil {
+		return nil, fmt.Errorf("read SKILL.md: %w", err)
+	}
+	name := filepath.Base(relPath)
+	skill := &Skill{Name: name, Path: relPath, Content: string(content)}
+	if metaBytes, err := fs.ReadFile(fsys, relPath+"/skill.toml"); err == nil {
+		if err := toml.Unmarshal(metaBytes, &skill.Meta); err != nil {
+			fmt.Fprintf(os.Stderr, "[qodex] warning: skipping invalid skill.toml in %s: %v\n", relPath, err)
+			skill.Meta = Metadata{}
+		}
+	}
+	return skill, nil
+}
+
 func Discover(projectRoot string) ([]Skill, error) {
+	builtins, err := discoverBuiltin()
+	if err != nil {
+		return nil, err
+	}
+
 	var roots []string
 	home, _ := os.UserHomeDir()
 	if home != "" {
@@ -47,6 +103,9 @@ func Discover(projectRoot string) ([]Skill, error) {
 	roots = append(roots, filepath.Join(projectRoot, ".qodex", "skills"))
 
 	byName := map[string]Skill{}
+	for _, skill := range builtins {
+		byName[skill.Name] = skill
+	}
 	for _, root := range roots {
 		entries, err := os.ReadDir(root)
 		if err != nil {

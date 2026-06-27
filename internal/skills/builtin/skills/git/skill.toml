@@ -1,0 +1,29 @@
+name = "git"
+description = "Work with Git version control."
+version = "0.1.0"
+
+triggers = [
+  "git",
+  "commit",
+  "branch",
+  "merge",
+  "rebase",
+  "pull",
+  "push",
+  "history",
+  "log"
+]
+
+allowed_tools = [
+  "git_status",
+  "git_diff",
+  "git_log",
+  "read_file",
+  "search_text",
+  "run_command",
+  "write_patch",
+  "review_changes",
+  "list_files"
+]
+
+context_budget_tokens = 4000

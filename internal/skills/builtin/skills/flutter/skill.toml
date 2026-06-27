@@ -1,0 +1,35 @@
+name = "flutter"
+description = "Develop, test, and build Flutter applications."
+version = "0.1.0"
+
+triggers = [
+  "flutter",
+  "dart",
+  "mobile",
+  "ios",
+  "android",
+  "web app",
+  "widget",
+  "material",
+  "cupertino"
+]
+
+allowed_tools = [
+  "flutter_run",
+  "flutter_build",
+  "flutter_test",
+  "pub_get",
+  "pub_upgrade",
+  "pub_add",
+  "pub_remove",
+  "dart_run",
+  "dart_analyze",
+  "dart_format",
+  "read_file",
+  "search_text",
+  "list_files",
+  "run_command",
+  "review_changes"
+]
+
+context_budget_tokens = 4000

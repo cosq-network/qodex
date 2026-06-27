@@ -1,0 +1,29 @@
+name = "java"
+description = "Develop, compile, and run Java projects."
+version = "0.1.0"
+
+triggers = [
+  "java",
+  "javac",
+  "jdk",
+  "jvm",
+  "maven",
+  "gradle",
+  "spring",
+  "jar",
+  "class"
+]
+
+allowed_tools = [
+  "javac_compile",
+  "java_run",
+  "read_file",
+  "search_text",
+  "list_files",
+  "run_command",
+  "lsp_diagnostics",
+  "lsp_definition",
+  "lsp_find_references"
+]
+
+context_budget_tokens = 4000

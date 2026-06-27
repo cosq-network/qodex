@@ -493,20 +493,30 @@ tool = "run_command"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(skills) != 1 {
-		t.Fatalf("expected 1 skill, got %d", len(skills))
+
+	byName := map[string]Skill{}
+	for _, s := range skills {
+		byName[s.Name] = s
 	}
-	if skills[0].Name != "myskill" {
-		t.Fatalf("expected myskill, got %s", skills[0].Name)
+
+	for _, name := range []string{"project", "go-testing", "git", "cmake", "clang", "make", "curl", "wget", "java", "rg", "sed", "base64", "node", "npm", "npx", "nvm", "dotnet", "nuget", "msbuild", "nmake", "system-packages", "python", "pip", "conda", "flutter", "dart", "archives", "system-admin"} {
+		if _, ok := byName[name]; !ok {
+			t.Fatalf("expected builtin skill %q in discovery", name)
+		}
 	}
-	if len(skills[0].Meta.Triggers) != 2 || skills[0].Meta.Triggers[0] != "foo" {
-		t.Fatalf("unexpected triggers: %v", skills[0].Meta.Triggers)
+
+	myskill, ok := byName["myskill"]
+	if !ok {
+		t.Fatalf("expected myskill in discovery, got: %v", byName)
 	}
-	if skills[0].Meta.ContextBudget != 500 {
-		t.Fatalf("expected budget 500, got %d", skills[0].Meta.ContextBudget)
+	if len(myskill.Meta.Triggers) != 2 || myskill.Meta.Triggers[0] != "foo" {
+		t.Fatalf("unexpected triggers: %v", myskill.Meta.Triggers)
 	}
-	if len(skills[0].Meta.Scripts) != 1 || skills[0].Meta.Scripts[0].Description != "Say hello" {
-		t.Fatalf("unexpected scripts: %v", skills[0].Meta.Scripts)
+	if myskill.Meta.ContextBudget != 500 {
+		t.Fatalf("expected budget 500, got %d", myskill.Meta.ContextBudget)
+	}
+	if len(myskill.Meta.Scripts) != 1 || myskill.Meta.Scripts[0].Description != "Say hello" {
+		t.Fatalf("unexpected scripts: %v", myskill.Meta.Scripts)
 	}
 }
 

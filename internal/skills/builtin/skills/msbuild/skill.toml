@@ -1,0 +1,28 @@
+name = "msbuild"
+description = "Build .NET projects with direct msbuild invocation."
+version = "0.1.0"
+
+triggers = [
+  "msbuild",
+  "build target",
+  ".net framework",
+  "wpf",
+  "windows forms",
+  "publish",
+  "rebuild"
+]
+
+allowed_tools = [
+  "msbuild",
+  "dotnet_run",
+  "dotnet_build",
+  "dotnet_test",
+  "nuget_restore",
+  "read_file",
+  "search_text",
+  "list_files",
+  "run_command",
+  "review_changes"
+]
+
+context_budget_tokens = 4000

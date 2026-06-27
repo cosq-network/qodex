@@ -1,0 +1,21 @@
+name = "base64"
+description = "Encode and decode base64 data."
+version = "0.1.0"
+
+triggers = [
+  "base64",
+  "encode",
+  "decode",
+  "b64",
+  "mime"
+]
+
+allowed_tools = [
+  "base64_encode",
+  "read_file",
+  "search_text",
+  "list_files",
+  "run_command"
+]
+
+context_budget_tokens = 4000

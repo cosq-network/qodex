@@ -1,0 +1,21 @@
+name = "sed"
+description = "Edit text in files with sed."
+version = "0.1.0"
+
+triggers = [
+  "sed",
+  "stream editor",
+  "replace text",
+  "inline edit",
+  "text substitution"
+]
+
+allowed_tools = [
+  "sed_edit",
+  "read_file",
+  "search_text",
+  "list_files",
+  "write_patch"
+]
+
+context_budget_tokens = 4000

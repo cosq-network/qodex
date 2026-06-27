@@ -1,0 +1,33 @@
+name = "dotnet"
+description = "Develop, build, test, and run .NET projects."
+version = "0.1.0"
+
+triggers = [
+  "dotnet",
+  "csharp",
+  "c#",
+  ".net",
+  "msbuild",
+  "nuget",
+  "xunit",
+  "nunit",
+  "mstest",
+  "asp.net",
+  "blazor"
+]
+
+allowed_tools = [
+  "dotnet_run",
+  "dotnet_build",
+  "dotnet_test",
+  "msbuild",
+  "nuget_restore",
+  "nuget_install",
+  "read_file",
+  "search_text",
+  "list_files",
+  "run_command",
+  "review_changes"
+]
+
+context_budget_tokens = 4000

@@ -1,0 +1,23 @@
+name = "curl"
+description = "Fetch URLs with curl using structured arguments."
+version = "0.1.0"
+
+triggers = [
+  "curl",
+  "http",
+  "https",
+  "fetch",
+  "download",
+  "api call",
+  "rest api"
+]
+
+allowed_tools = [
+  "curl",
+  "read_file",
+  "search_text",
+  "list_files",
+  "run_command"
+]
+
+context_budget_tokens = 4000

@@ -1,0 +1,29 @@
+name = "pip"
+description = "Install Python packages with pip and pip3."
+version = "0.1.0"
+
+triggers = [
+  "pip",
+  "pip3",
+  "install package",
+  "python package",
+  "requirements.txt",
+  "pypi",
+  "wheel"
+]
+
+allowed_tools = [
+  "pip_install",
+  "pip3_install",
+  "python_run",
+  "python3_run",
+  "conda_install",
+  "conda_create",
+  "read_file",
+  "search_text",
+  "list_files",
+  "run_command",
+  "review_changes"
+]
+
+context_budget_tokens = 4000

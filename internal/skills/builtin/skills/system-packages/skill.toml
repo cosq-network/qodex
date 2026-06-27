@@ -1,0 +1,34 @@
+name = "system-packages"
+description = "Manage system packages across apt, dnf, brew, winget, chocolatey, and snap."
+version = "0.1.0"
+
+triggers = [
+  "apt",
+  "apt-get",
+  "dnf",
+  "brew",
+  "winget",
+  "chocolatey",
+  "choco",
+  "snap",
+  "install package",
+  "system package",
+  "package manager"
+]
+
+allowed_tools = [
+  "apt_install",
+  "apt_get_install",
+  "dnf_install",
+  "brew_install",
+  "winget_install",
+  "choco_install",
+  "snap_install",
+  "read_file",
+  "search_text",
+  "list_files",
+  "run_command",
+  "review_changes"
+]
+
+context_budget_tokens = 4000

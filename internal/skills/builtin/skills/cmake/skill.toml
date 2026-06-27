@@ -1,0 +1,24 @@
+name = "cmake"
+description = "Build and configure CMake-based C/C++ projects."
+version = "0.1.0"
+
+triggers = [
+  "cmake",
+  "build system",
+  "c++",
+  "c",
+  "configure",
+  "makefile"
+]
+
+allowed_tools = [
+  "cmake_configure",
+  "cmake_build",
+  "read_file",
+  "search_text",
+  "list_files",
+  "run_command",
+  "review_changes"
+]
+
+context_budget_tokens = 4000

@@ -520,6 +520,12 @@ func (a *Agent) executeTool(ctx context.Context, call toolCall) (string, error) 
 	if call.Name == "run_command" && tools.IsNetworkCommand(call.Arguments) {
 		effect = "network"
 	}
+	if (call.Name == "npm_command" || call.Name == "npx_command") && tools.IsNpmCommandNetwork(call.Arguments) {
+		effect = "network"
+	}
+	if call.Name == "npx_command" && tools.IsNpxCommandNetwork(call.Arguments) {
+		effect = "network"
+	}
 	diff, _ := a.tools.DiffPreview(call.Name, call.Arguments)
 	summary := call.Name + " " + string(call.Arguments)
 	a.emit(Event{Type: "tool_requested", Tool: call.Name, Effect: effect, Summary: summary, Detail: diff})

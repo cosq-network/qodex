@@ -159,6 +159,49 @@ qodex config set runtime.temperature 0.1
 qodex config set model.base_url http://127.0.0.1:8080/v1
 ```
 
+## Built-in Tools
+
+Qodex ships with a broad set of built-in tools covering development workflows across many languages, platforms, and system administration tasks.
+
+| Category | Tools |
+|----------|-------|
+| **File & Code** | `list_files`, `read_file`, `search_text`, `write_file`, `write_patch`, `run_command`, `run_script`, `run_tests`, `run_formatter`, `review_changes`, `project_index` |
+| **Git** | `git_status`, `git_diff`, `git_log` |
+| **Build** | `cmake_configure`, `cmake_build`, `clang_format`, `clang_tidy`, `make_build`, `nmake_build`, `msbuild` |
+| **Network** | `curl`, `wget` |
+| **Java** | `javac_compile`, `java_run` |
+| **Search & Text** | `rg_search`, `grep_search`, `find_files`, `sed_edit`, `awk_process`, `base64_encode` |
+| **Node.js** | `node_run`, `npm_command`, `npx_command`, `nvm_use` |
+| **.NET** | `dotnet_run`, `dotnet_build`, `dotnet_test`, `nuget_restore`, `nuget_install` |
+| **Python** | `python_run`, `python3_run`, `pip_install`, `pip3_install` |
+| **Conda** | `conda_install`, `conda_create` |
+| **Flutter / Dart** | `flutter_run`, `flutter_build`, `flutter_test`, `dart_run`, `dart_analyze`, `dart_format`, `pub_get`, `pub_upgrade`, `pub_add`, `pub_remove` |
+| **Archives** | `ar_create`, `ar_extract`, `ar_list`, `tar_create`, `tar_extract`, `tar_list`, `zip_create`, `zip_extract`, `zip_list` |
+| **System** | `ps_list`, `tail_file`, `chmod_change`, `chown_change`, `user_add`, `user_del` |
+| **Package Managers** | `winget_install`, `choco_install`, `apt_install`, `apt_get_install`, `snap_install`, `dnf_install`, `brew_install` |
+| **Docker** | `docker_build`, `docker_run`, `docker_compose_up`, `docker_compose_down` |
+| **Virtualization** | `qemu_run` |
+| **Android / ADB** | `adb_devices`, `adb_shell`, `adb_push`, `adb_pull` |
+| **LSP** | `lsp_diagnostics`, `lsp_definition`, `lsp_find_references` |
+
+Each tool exposes a JSON schema so the model knows which parameters to pass. Tools are classified by effect (`read`, `write`, `shell`, `network`, `destructive`) to determine approval requirements.
+
+## Built-in Skills
+
+In addition to user and project skills, Qodex ships with built-in skills that are always available:
+
+- `project` — Project awareness and repository conventions.
+- `go-testing` — Go testing conventions and best practices.
+- `git`, `cmake`, `clang`, `make`, `curl`, `wget`, `java`, `rg`, `sed`, `base64` — Language/runtime-specific guidance.
+- `node`, `npm`, `npx`, `nvm` — Node.js ecosystem conventions.
+- `dotnet`, `nuget`, `msbuild`, `nmake` — .NET ecosystem conventions.
+- `system-packages`, `python`, `pip`, `conda` — Python and system package management.
+- `flutter`, `dart` — Flutter/Dart development conventions.
+- `archives`, `system-admin` — Archive handling and system administration.
+- `docker`, `qemu`, `adb` — Container, VM, and Android device management.
+
+Built-in skills are embedded at compile time. They can be overridden by placing a skill with the same name in your project's `.qodex/skills/` or user-level `~/.config/qodex/skills/` directory.
+
 ## LSP Tools (Diagnostics, Definitions, References)
 
 Qodex ships with three language-server-powered tools that provide precise code analysis. They communicate with a running LSP server (e.g. `gopls`) over JSON-RPC 2.0 via stdio.

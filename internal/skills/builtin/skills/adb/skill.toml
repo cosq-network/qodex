@@ -1,0 +1,29 @@
+name = "adb"
+description = "Interact with Android devices via ADB."
+version = "0.1.0"
+
+triggers = [
+  "adb",
+  "android",
+  "device",
+  "shell",
+  "push",
+  "pull",
+  "apk",
+  "logcat",
+  "pm"
+]
+
+allowed_tools = [
+  "adb_devices",
+  "adb_shell",
+  "adb_push",
+  "adb_pull",
+  "read_file",
+  "search_text",
+  "list_files",
+  "run_command",
+  "review_changes"
+]
+
+context_budget_tokens = 4000

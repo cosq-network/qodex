@@ -1,0 +1,24 @@
+name = "npx"
+description = "Run packages via npx without global installation."
+version = "0.1.0"
+
+triggers = [
+  "npx",
+  "run package",
+  "execute binary",
+  "one-off tool",
+  "create-react-app",
+  "ts-node",
+  "eslint"
+]
+
+allowed_tools = [
+  "npx_command",
+  "read_file",
+  "search_text",
+  "list_files",
+  "run_command",
+  "review_changes"
+]
+
+context_budget_tokens = 4000

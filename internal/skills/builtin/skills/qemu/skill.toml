@@ -1,0 +1,24 @@
+name = "qemu"
+description = "Run virtual machines with QEMU."
+version = "0.1.0"
+
+triggers = [
+  "qemu",
+  "virtual machine",
+  "vm",
+  "kvm",
+  "emulator",
+  "qcow2",
+  "iso boot"
+]
+
+allowed_tools = [
+  "qemu_run",
+  "read_file",
+  "search_text",
+  "list_files",
+  "run_command",
+  "review_changes"
+]
+
+context_budget_tokens = 4000

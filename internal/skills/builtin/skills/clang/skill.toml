@@ -1,0 +1,26 @@
+name = "clang"
+description = "Format and lint C/C++ code with clang tools."
+version = "0.1.0"
+
+triggers = [
+  "clang",
+  "clang-format",
+  "clang-tidy",
+  "c++",
+  "c",
+  "static analysis",
+  "lint"
+]
+
+allowed_tools = [
+  "clang_format",
+  "clang_tidy",
+  "read_file",
+  "search_text",
+  "list_files",
+  "lsp_diagnostics",
+  "lsp_definition",
+  "lsp_find_references"
+]
+
+context_budget_tokens = 4000
