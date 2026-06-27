@@ -529,6 +529,54 @@ scripts/                Install script
 .github/workflows/      CI + release workflows
 ```
 
+## Cross-Platform Support
+
+Qodex targets Linux, macOS, and Windows without CGO. Filesystem, process, signal, and shell differences are isolated in platform-specific files recognized by Go build tags.
+
+### Architecture Pattern
+
+Shared interfaces are declared in the platform-common file, with two implementations behind build tags:
+
+```text
+internal/tools/
+    shell_unix.go         # //go:build !windows
+    shell_windows.go      # //go:build windows
+    tools.go              # shared registry, calls ShellCommand()
+
+internal/model/
+    stop_unix.go          # SIGKILL escalation
+    stop_windows.go       # Process.Kill fallback
+    process_unix.go       # SysProcAttr.Setpgid
+    process_windows.go    # no-op
+    manager.go            # shared server lifecycle
+```
+
+This keeps the platform-specific code colocated with the shared logic instead of scattering `runtime.GOOS` switches throughout.
+
+### Platform Boundaries
+
+The following OS differences are handled at the layer shown:
+
+| Boundary | Linux / macOS | Windows |
+|----------|---------------|---------|
+| Signals | `signal.NotifyContext` with `SIGTERM` | `Interrupt` only |
+| Child process groups | `Setpgid` for clean signal forwarding | no-op |
+| Stop escalation | `SIGKILL` after `SIGTERM` | `Process.Kill()` |
+| Shell execution | `sh -c` | `cmd.exe /C` |
+| Path separators | `/` via `path/filepath` | `\` via `path/filepath` |
+| LSP file URIs | `file:///home/user/...` | `file:///C:/Users/...` |
+| Text line endings | `\n` | `\r\n` normalized to `\n` after file read |
+| File permissions | `0o755` / `0o644` | `0o666` for broad native access |
+| Tar symlinks | extracted | skipped (no Admin/elevated mode) |
+| TTY detection | `stat` + `ModeCharDevice` | `go-isatty` |
+
+### Adding A New Platform Boundary
+
+1. Create `foo_unix.go` and `foo_windows.go` in the same package.
+2. Put the shared call site in `foo.go`.
+3. Run `go build ./...` on each OS, or use `GOOS=windows go build ./...` for a lightweight compile check.
+4. Avoid `runtime.GOOS` inside non-platform-tagged files — it creates un-testable branches.
+
 ## Testing Strategy
 
 Test the agent as deterministic components:

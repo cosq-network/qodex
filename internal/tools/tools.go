@@ -289,6 +289,7 @@ func splitLines(s string) []string {
 	if s == "" {
 		return nil
 	}
+	s = strings.ReplaceAll(s, "\r\n", "\n")
 	lines := strings.Split(s, "\n")
 	if lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
@@ -385,7 +386,7 @@ func (r *Registry) readFile(ctx context.Context, raw json.RawMessage) (Result, e
 	if err != nil {
 		return Result{}, err
 	}
-	content := string(data)
+	content := strings.ReplaceAll(string(data), "\r\n", "\n")
 	if args.StartLine > 0 || args.EndLine > 0 {
 		lines := strings.Split(content, "\n")
 		start := max(args.StartLine, 1)
@@ -432,7 +433,7 @@ func (r *Registry) searchText(ctx context.Context, raw json.RawMessage) (Result,
 		if err != nil || bytes.IndexByte(data, 0) >= 0 {
 			return nil
 		}
-		lines := strings.Split(string(data), "\n")
+		lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
 		for i, line := range lines {
 			if strings.Contains(strings.ToLower(line), strings.ToLower(args.Query)) {
 				rel, _ := filepath.Rel(r.root, path)
@@ -465,7 +466,7 @@ func (r *Registry) writeFile(ctx context.Context, raw json.RawMessage) (Result, 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return Result{}, err
 	}
-	if err := os.WriteFile(path, []byte(args.Content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(args.Content), 0o666); err != nil {
 		return Result{}, err
 	}
 	return Result{OK: true, Summary: fmt.Sprintf("Wrote %s.", args.Path)}, nil
@@ -536,7 +537,8 @@ func (r *Registry) runCommand(ctx context.Context, raw json.RawMessage) (Result,
 		if err := rejectDangerousShellCommand(args.Command); err != nil {
 			return Result{}, err
 		}
-		cmd = exec.CommandContext(cctx, "sh", "-c", args.Command)
+		shell, shellArgs := ShellCommand(args.Command)
+		cmd = exec.CommandContext(cctx, shell, shellArgs...)
 		args.Shell = true
 		summary = "Ran shell command: " + args.Command
 	}
@@ -602,6 +604,22 @@ func rejectDangerousShellCommand(command string) error {
 	return nil
 }
 
+func isRootPath(p string) bool {
+	if p == "/" {
+		return true
+	}
+	if filepath.IsAbs(p) {
+		cleaned := filepath.Clean(p)
+		if cleaned == string(filepath.Separator) {
+			return true
+		}
+		if vol := filepath.VolumeName(cleaned); vol != "" {
+			return cleaned == vol+string(filepath.Separator)
+		}
+	}
+	return false
+}
+
 func rejectDangerousArgv(argv []string) error {
 	if len(argv) == 0 {
 		return nil
@@ -610,7 +628,13 @@ func rejectDangerousArgv(argv []string) error {
 	if base == "rm" {
 		hasNoPreserve := false
 		for _, arg := range argv[1:] {
-			if arg == "/" || strings.HasPrefix(arg, "/") && (strings.Contains(arg, "*") || strings.Contains(arg, "..")) {
+			if isRootPath(arg) {
+				return fmt.Errorf("refusing dangerous command: %s", strings.Join(argv, " "))
+			}
+			if strings.HasPrefix(arg, "/") && (strings.Contains(arg, "*") || strings.Contains(arg, "..")) {
+				return fmt.Errorf("refusing dangerous command: %s", strings.Join(argv, " "))
+			}
+			if filepath.IsAbs(arg) && (strings.Contains(arg, "*") || strings.Contains(arg, "..")) {
 				return fmt.Errorf("refusing dangerous command: %s", strings.Join(argv, " "))
 			}
 			if arg == "--no-preserve-root" {
@@ -618,7 +642,7 @@ func rejectDangerousArgv(argv []string) error {
 			}
 			if strings.Contains(arg, "rf") && strings.HasPrefix(arg, "-") {
 				for _, target := range argv[1:] {
-					if target == "/" {
+					if isRootPath(target) {
 						return fmt.Errorf("refusing dangerous command: %s", strings.Join(argv, " "))
 					}
 				}
@@ -626,7 +650,7 @@ func rejectDangerousArgv(argv []string) error {
 		}
 		if hasNoPreserve {
 			for _, arg := range argv[1:] {
-				if arg == "/" {
+				if isRootPath(arg) {
 					return fmt.Errorf("refusing dangerous command: %s", strings.Join(argv, " "))
 				}
 			}

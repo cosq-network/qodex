@@ -616,7 +616,8 @@ func (a *Agent) executeScript(ctx context.Context, call toolCall) (string, error
 		a.logError("failed to persist approval: %v", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", found.Command)
+	shell, shellArgs := tools.ShellCommand(found.Command)
+	cmd := exec.CommandContext(ctx, shell, shellArgs...)
 	cmd.Dir = a.cfg.ProjectRoot
 	output, err := cmd.CombinedOutput()
 

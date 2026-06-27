@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -64,7 +65,12 @@ type Client struct {
 }
 
 func pathToURI(path string) string {
-	return "file://" + path
+	p := filepath.ToSlash(path)
+	if filepath.IsAbs(path) {
+		p = strings.TrimPrefix(p, "/")
+		return "file:///" + p
+	}
+	return "file://" + p
 }
 
 func NewClient(ctx context.Context, command string, args []string) (*Client, error) {

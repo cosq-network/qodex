@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -65,6 +64,9 @@ func rootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "qodex",
 		Short: "Local-first coding agent for llama.cpp and Qwen Coder",
+		Long: `Qodex is a local-first coding agent that runs models directly on your machine.
+
+No configuration found? Run 'qodex setup' for an interactive setup wizard.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			if debugPath != "" {
 				f, err := os.OpenFile(debugPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -76,6 +78,16 @@ func rootCmd() *cobra.Command {
 				fmt.Fprintf(debugLog, "%s qodex version=%s commit=%s\n", ts, version, commit)
 			}
 			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			if !ensureConfigExists(cwd) {
+				return promptRunSetup(cwd)
+			}
+			return cmd.Help()
 		},
 	}
 	cmd.PersistentFlags().StringVar(&cfgPath, "config", "", "config file path")
@@ -94,6 +106,8 @@ func rootCmd() *cobra.Command {
 	cmd.AddCommand(resetCmd())
 	cmd.AddCommand(versionCmd())
 	cmd.AddCommand(completionCmd())
+	cmd.AddCommand(serveCmd())
+	cmd.AddCommand(modelsCmd())
 	return cmd
 }
 
@@ -278,7 +292,7 @@ func runCmd(cfgPath *string, yes *bool) *cobra.Command {
 			}
 			defer rt.Close()
 
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			ctx, stop := signal.NotifyContext(cmd.Context(), interruptSignals...)
 			defer stop()
 			ctx, cancel := context.WithTimeout(ctx, 20*time.Minute)
 			defer cancel()
@@ -300,7 +314,7 @@ func writeStarterFile(path, content string, force bool) error {
 		fmt.Printf("Exists %s\n", path)
 		return nil
 	}
-	return os.WriteFile(path, []byte(content), 0o644)
+	return os.WriteFile(path, []byte(content), 0o666)
 }
 
 func starterConfig() string {
@@ -582,7 +596,7 @@ func reviewCmd(cfgPath *string, yes *bool) *cobra.Command {
 			}
 			defer rt.Close()
 
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			ctx, stop := signal.NotifyContext(cmd.Context(), interruptSignals...)
 			defer stop()
 			ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 			defer cancel()

@@ -553,6 +553,10 @@ func extractAutoQuery(s string) string {
 	return strings.TrimSpace(after[:end])
 }
 
+func pathDepth(p string) int {
+	return strings.Count(filepath.ToSlash(p), "/")
+}
+
 func matchFiles(files []string, query string) []string {
 	if query == "" {
 		return nil
@@ -570,7 +574,7 @@ func matchFiles(files []string, query string) []string {
 		}
 	}
 	sort.Slice(matches, func(i, j int) bool {
-		return strings.Count(matches[i], "/") < strings.Count(matches[j], "/")
+		return pathDepth(matches[i]) < pathDepth(matches[j])
 	})
 	return matches
 }

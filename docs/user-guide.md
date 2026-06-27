@@ -1,14 +1,72 @@
 # User Guide
 
-Qodex is a local terminal coding assistant. It runs against a locally hosted Qwen Coder model through `llama.cpp`.
+Qodex is a local terminal coding assistant. It runs against a locally hosted Qwen Coder model through `llama.cpp`, `vLLM`, or `SGLang`.
 
 ## What You Need
 
 - A working Go-built `qodex` binary.
-- A `llama.cpp` server binary.
-- A local Qwen Coder GGUF model file.
 - A terminal with true color support.
 - `ripgrep` and `git` installed for the best experience.
+
+Qodex manages backend installation and model downloads automatically. Run `qodex` or `qodex setup` for an interactive wizard that handles everything.
+
+## System Requirements
+
+### Minimum
+
+Run a 7B Q4 model on CPU:
+
+- **OS**: Linux (x86_64/arm64), macOS 12+, Windows 10/11 (WSL2 recommended)
+- **CPU**: 4-core x86_64 with AVX2, or ARM64 (Apple Silicon / Raspberry Pi 5-class)
+- **RAM**: 8 GB
+- **Disk**: 10 GB free
+- **Terminal**: 256-color or true-color capable
+
+### Optimum
+
+Larger models (14B–32B) or GPU-accelerated inference:
+
+- **OS**: Linux, macOS 13+, Windows 11 (WSL2)
+- **CPU**: 8+ core modern x86_64 / ARM64
+- **RAM**: 32 GB+ unified or system memory
+- **GPU**: NVIDIA RTX 3060 12 GB+ (CUDA) or Apple M1 Pro/Max/Ultra 16 GB+ unified memory
+- **Disk**: 30 GB free SSD/NVMe
+- **Terminal**: true-color terminal (WezTerm, Kitty, Alacritty, iTerm2, Windows Terminal)
+
+### Per-Platform Notes
+
+#### Linux
+
+- **Distro**: Ubuntu 22.04+, Fedora 38+, Arch, or NixOS recommended.
+- **llama.cpp**: prebuilt binaries download automatically during `qodex setup`.
+- **vLLM / SGLang**: requires Python 3.8+ and `pip`. CUDA 12.x toolkit recommended for NVIDIA GPUs.
+- **Terminal**: ensure `TERM=xterm-256color` or better.
+
+#### macOS
+
+- **Version**: 13 Ventura or later. Apple Silicon (M1/M2/M3/M4) preferred; Intel supported but slower.
+- **llama.cpp**: arm64 or universal binary downloaded during setup.
+- **vLLM**: experimental on macOS; expect CPU-only or MPS with limited performance.
+- **SGLang**: best suited to Linux; macOS use is limited.
+
+#### Windows
+
+- **OS**: Windows 10 22H2+ or Windows 11.
+- **WSL2**: recommended for best compatibility with llama.cpp binaries and Python-based backends.
+- **Native**: `qodex` runs natively, but GPU acceleration requires a CUDA-capable setup.
+- **Terminal**: Windows Terminal with a Nerd Font for the best TUI experience.
+
+### Memory Sizing By Model
+
+| Model Size       | Min RAM (Q4) | Optimum RAM        |
+|------------------|--------------|--------------------|
+| 1.5B – 3B       | 4 GB         | 8 GB               |
+| 7B               | 6 GB         | 16 GB              |
+| 14B              | 10 GB        | 24 GB              |
+| 32B              | 18 GB        | 32 GB+             |
+| 72B+ (Q4)       | 40 GB        | 64 GB+ / 48 GB VRAM |
+
+Use `qodex models list` and `qodex models download` to pick a model matching your hardware.
 
 ## Recommended Model
 
@@ -24,25 +82,25 @@ Better quality: Qwen2.5-Coder 14B, quantized
 
 Smaller models are useful for testing the app, but they will make more mistakes during multi-step coding tasks.
 
-## Start llama.cpp
+## Setup
 
-Example:
+Run `qodex` without arguments for the first time, or run `qodex setup` explicitly, to start the interactive setup wizard:
+
+1. **Choose Backend** — Select `llama.cpp` (default), `vLLM`, or `SGLang`
+2. **Install Backend** — Qodex downloads and installs the backend binaries automatically
+3. **Choose Model** — Select from available Qwen Coder models
+4. **Start Server** — Qodex starts the model server in the background
+5. **Create Config** — Writes `.qodex/config.toml` and a starter project skill
+
+After setup, use these commands to manage the model server:
 
 ```sh
-llama-server \
-  --model ./models/qwen2.5-coder-7b-instruct-q4_k_m.gguf \
-  --host 127.0.0.1 \
-  --port 8080 \
-  --ctx-size 32768
+qodex serve start      # Start the model server
+qodex serve status     # Check if the server is running
+qodex serve stop       # Stop the model server
+qodex models list      # List available models
+qodex models download <model-name>  # Download a model
 ```
-
-The expected API base URL is:
-
-```text
-http://127.0.0.1:8080/v1
-```
-
-Qodex uses the OpenAI-compatible API exposed by `llama.cpp`.
 
 ## Configure Qodex
 
@@ -256,7 +314,7 @@ qodex reset --all
 
 ## Backend Profiles
 
-Qodex supports multiple OpenAI-compatible local backends. The `runtime.backend` config value selects the profile.
+Qodex supports multiple OpenAI-compatible local backends. Select the backend during `qodex setup`, or override with `runtime.backend` in `.qodex/config.toml`.
 
 ### llama.cpp (Default)
 
@@ -265,7 +323,7 @@ Qodex supports multiple OpenAI-compatible local backends. The `runtime.backend` 
 backend = "llama.cpp"
 ```
 
-See [llama.cpp Setup Guide](llama-cpp-setup.md) for model recommendations and server flags.
+Qodex installs llama.cpp to `~/.config/qodex/bin/` and starts the server on port `8080` by default. Models are stored in `~/.config/qodex/models/`.
 
 ### vLLM
 
@@ -274,21 +332,7 @@ See [llama.cpp Setup Guide](llama-cpp-setup.md) for model recommendations and se
 backend = "vllm"
 ```
 
-vLLM serves an OpenAI-compatible endpoint on port 8000 by default. Example server command:
-
-```sh
-vllm serve Qwen/Qwen2.5-Coder-7B-Instruct --host 0.0.0.0 --port 8000
-```
-
-Configure Qodex to match:
-
-```toml
-[model]
-base_url = "http://127.0.0.1:8000/v1"
-model = "Qwen/Qwen2.5-Coder-7B-Instruct"
-```
-
-See `examples/config.vllm.toml` for a full config.
+vLLM is installed via `pip` and serves an OpenAI-compatible endpoint on port `8000` by default.
 
 ### SGLang
 
@@ -297,21 +341,9 @@ See `examples/config.vllm.toml` for a full config.
 backend = "sglang"
 ```
 
-SGLang serves an OpenAI-compatible endpoint on port 30000 by default. Example server command:
+SGLang is installed via `pip` and serves an OpenAI-compatible endpoint on port `8000` by default.
 
-```sh
-python -m sglang.launch_server --model-path Qwen/Qwen2.5-Coder-7B-Instruct --port 30000
-```
-
-Configure Qodex to match:
-
-```toml
-[model]
-base_url = "http://127.0.0.1:30000/v1"
-model = "Qwen/Qwen2.5-Coder-7B-Instruct"
-```
-
-See `examples/config.sglang.toml` for a full config.
+All backends are managed through `qodex serve start|stop|status`. See [llama.cpp Setup Guide](llama-cpp-setup.md) for additional model recommendations.
 
 ## Native Tool Calls
 
@@ -339,6 +371,16 @@ tool_calls = "prompt"
 ```
 
 Not all backends implement `tools` parameter support equally. Test with your specific backend and model combination. Streaming is disabled when native tool calls are in use.
+
+## Shell Commands And Windows
+
+On Windows, Qodex runs shell commands through `cmd.exe /C` instead of `sh -c`. This affects:
+
+- `run_command` tool calls
+- Skill scripts executed via `run_script`
+- Test and formatter discovery (`go test`, `pytest`, `npm test`, etc.)
+
+Bash-specific syntax (pipes, `&&`, `||`, `$()`, `[[ ]]`) is not available in `cmd.exe` sessions. If you need shell portability, use POSIX-compatible commands or run inside WSL2.
 
 ## Troubleshooting
 

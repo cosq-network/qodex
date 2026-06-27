@@ -18,7 +18,7 @@ func resetCmd() *cobra.Command {
 		Long: `Removes Qodex data from this system.
 
 Removes the project-local .qodex directory (config, database, skills).
-Use --all to also remove the global ~/.config/qodex directory.
+Use --all to also remove the global Qodex user directory.
 
 Session history in the local database will be permanently lost.
 `,
@@ -27,7 +27,7 @@ Session history in the local database will be permanently lost.
 		},
 	}
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "skip confirmation prompt")
-	cmd.Flags().BoolVar(&all, "all", false, "also remove global ~/.config/qodex directory")
+	cmd.Flags().BoolVar(&all, "all", false, "also remove global Qodex user directory")
 	return cmd
 }
 

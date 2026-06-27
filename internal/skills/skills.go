@@ -140,6 +140,7 @@ func matchScore(skill Skill, prompt string) int {
 	}
 
 	content := strings.ToLower(skill.Content)
+	content = strings.ReplaceAll(content, "\r\n", "\n")
 	lines := strings.Split(content, "\n")
 
 	seen := map[string]bool{}
@@ -184,7 +185,7 @@ func Summarize(skills []Skill) string {
 			b.WriteString(strings.Join(s.Meta.Triggers, ", "))
 			b.WriteString(")")
 		}
-		firstLine := strings.SplitN(strings.TrimSpace(s.Content), "\n", 2)[0]
+		firstLine := strings.SplitN(strings.ReplaceAll(strings.TrimSpace(s.Content), "\r\n", "\n"), "\n", 2)[0]
 		firstLine = strings.TrimLeft(firstLine, "# ")
 		if firstLine != "" {
 			b.WriteString(": ")
@@ -332,6 +333,7 @@ type section struct {
 }
 
 func splitSections(content string) (preamble string, sections []section) {
+	content = strings.ReplaceAll(content, "\r\n", "\n")
 	lines := strings.Split(content, "\n")
 	var current *section
 	for _, line := range lines {

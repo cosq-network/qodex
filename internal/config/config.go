@@ -382,7 +382,7 @@ func SetProjectValue(projectRoot, key, value string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(updated), 0o644)
+	return os.WriteFile(path, []byte(updated), 0o666)
 }
 
 func sectionOf(key string) string {
@@ -401,6 +401,7 @@ func nameOf(key string) string {
 func setLine(content, dottedKey, value string) string {
 	section := sectionOf(dottedKey)
 	name := nameOf(dottedKey)
+	content = strings.ReplaceAll(content, "\r\n", "\n")
 	lines := strings.Split(content, "\n")
 	current := ""
 	insertAt := len(lines)
