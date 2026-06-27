@@ -281,7 +281,7 @@ func runCmd(cfgPath *string, yes *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !ensureConfigExists(cwd) {
+			if *cfgPath == "" && !ensureConfigExists(cwd) {
 				if err := promptRunSetup(cwd); err != nil {
 					return err
 				}
@@ -363,7 +363,7 @@ func chatCmd(cfgPath *string, yes *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !ensureConfigExists(cwd) {
+			if *cfgPath == "" && !ensureConfigExists(cwd) {
 				if err := promptRunSetup(cwd); err != nil {
 					return err
 				}
@@ -585,7 +585,7 @@ func reviewCmd(cfgPath *string, yes *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !ensureConfigExists(cwd) {
+			if *cfgPath == "" && !ensureConfigExists(cwd) {
 				if err := promptRunSetup(cwd); err != nil {
 					return err
 				}

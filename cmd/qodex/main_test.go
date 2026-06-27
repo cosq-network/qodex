@@ -49,7 +49,11 @@ func TestRunCommandWithFakeEndpoint(t *testing.T) {
 	server.Start()
 	defer server.Close()
 
-	configPath := filepath.Join(root, "config.toml")
+	qodexDir := filepath.Join(root, ".qodex")
+	if err := os.MkdirAll(qodexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(qodexDir, "config.toml")
 	if err := os.WriteFile(configPath, []byte(`[model]
 provider = "openai-compatible"
 base_url = "`+server.URL+`/v1"
