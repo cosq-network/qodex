@@ -42,31 +42,53 @@ type Registry struct {
 
 func NewRegistry(projectRoot string) *Registry {
 	r := &Registry{root: projectRoot, tools: map[string]Tool{}}
-	r.add("list_files", "List files under the project root", "read", r.listFiles)
-	r.add("read_file", "Read a UTF-8 text file", "read", r.readFile)
-	r.add("search_text", "Search text in project files", "read", r.searchText)
-	r.add("write_file", "Write a complete file under the project root", "write", r.writeFile)
-	r.add("write_patch", "Apply a unified diff under the project root", "write", r.writePatch)
-	r.add("run_command", "Run a command in the project root", "shell", r.runCommand)
-	r.add("run_script", "Run a pre-approved script from an active skill by description", "shell", r.runScript)
-	r.add("git_status", "Show git status", "read", r.gitStatus)
-	r.add("git_diff", "Show git diff", "read", r.gitDiff)
-	r.add("project_index", "Query the project index: list files by language/pattern, find symbols by name/kind, or get a project summary", "read", r.projectIndex)
-	r.add("run_tests", "Discover and run tests. Accepts pattern (package path or test name regex), file (specific test file), or framework hint (go, pytest, jest, etc.). Returns test output and summary.", "shell", r.runTests)
-	r.add("run_formatter", "Run a code formatter on the project or specific files. Accepts tool (go, ruff, prettier, black, etc.) and path. Requires approval.", "shell", r.runFormatter)
-	r.add("review_changes", "Analyze uncommitted git changes. Accepts scope (working, staged, or all). Returns structured review of diffs with potential issues and suggestions.", "read", r.reviewChanges)
-	r.add("lsp_diagnostics", "Run an LSP language server to get diagnostics (errors, warnings, hints) for a file. Accepts path to a source file. Requires a compatible LSP server (gopls, pyright, etc.) to be installed.", "read", r.lspDiagnostics)
-	r.add("lsp_definition", "Go to the definition of a symbol at a given file, line, and column. Accepts path, line (1-based), and character (1-based). Returns the file, line, and column of the definition.", "read", r.lspDefinition)
-	r.add("lsp_find_references", "Find all references to a symbol at a given file, line, and column. Accepts path, line (1-based), and character (1-based). Returns a list of file:line:col locations.", "read", r.lspFindReferences)
+	r.add("list_files", "List files under the project root", "read", listFilesParams, r.listFiles)
+	r.add("read_file", "Read a UTF-8 text file", "read", readFileParams, r.readFile)
+	r.add("search_text", "Search text in project files", "read", searchTextParams, r.searchText)
+	r.add("write_file", "Write a complete file under the project root", "write", writeFileParams, r.writeFile)
+	r.add("write_patch", "Apply a unified diff under the project root", "write", writePatchParams, r.writePatch)
+	r.add("run_command", "Run a command in the project root", "shell", runCommandParams, r.runCommand)
+	r.add("run_script", "Run a pre-approved script from an active skill by description", "shell", runScriptParams, r.runScript)
+	r.add("git_status", "Show git status", "read", gitStatusParams, r.gitStatus)
+	r.add("git_diff", "Show git diff", "read", gitDiffParams, r.gitDiff)
+	r.add("project_index", "Query the project index: list files by language/pattern, find symbols by name/kind, or get a project summary", "read", projectIndexParams, r.projectIndex)
+	r.add("run_tests", "Discover and run tests. Accepts pattern (package path or test name regex), file (specific test file), or framework hint (go, pytest, jest, etc.). Returns test output and summary.", "shell", runTestsParams, r.runTests)
+	r.add("run_formatter", "Run a code formatter on the project or specific files. Accepts tool (go, ruff, prettier, black, etc.) and path. Requires approval.", "shell", runFormatterParams, r.runFormatter)
+	r.add("review_changes", "Analyze uncommitted git changes. Accepts scope (working, staged, or all). Returns structured review of diffs with potential issues and suggestions.", "read", reviewChangesParams, r.reviewChanges)
+	r.add("lsp_diagnostics", "Run an LSP language server to get diagnostics (errors, warnings, hints) for a file. Accepts path to a source file. Requires a compatible LSP server (gopls, pyright, etc.) to be installed.", "read", lspDiagnosticsParams, r.lspDiagnostics)
+	r.add("lsp_definition", "Go to the definition of a symbol at a given file, line, and column. Accepts path, line (1-based), and character (1-based). Returns the file, line, and column of the definition.", "read", lspDefinitionParams, r.lspDefinition)
+	r.add("lsp_find_references", "Find all references to a symbol at a given file, line, and column. Accepts path, line (1-based), and character (1-based). Returns a list of file:line:col locations.", "read", lspFindReferencesParams, r.lspFindReferences)
 	return r
 }
 
 var defaultParamSchema = json.RawMessage(`{"type":"object"}`)
 
-func (r *Registry) add(name, desc, effect string, fn func(context.Context, json.RawMessage) (Result, error)) {
+var (
+	listFilesParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"max_results":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	readFileParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"start_line":{"type":"integer"},"end_line":{"type":"integer"}},"required":["path"],"additionalProperties":false}`)
+	searchTextParams = json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"},"path":{"type":"string"},"case_sensitive":{"type":"boolean"}},"required":["query"],"additionalProperties":false}`)
+	writeFileParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"],"additionalProperties":false}`)
+	writePatchParams = json.RawMessage(`{"type":"object","properties":{"patch":{"type":"string"}},"required":["patch"],"additionalProperties":false}`)
+	runCommandParams = json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"shell":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	runScriptParams = json.RawMessage(`{"type":"object","properties":{"description":{"type":"string"}},"required":["description"],"additionalProperties":false}`)
+	gitStatusParams = json.RawMessage(`{"type":"object","properties":{},"required":[],"additionalProperties":false}`)
+	gitDiffParams = json.RawMessage(`{"type":"object","properties":{},"required":[],"additionalProperties":false}`)
+	projectIndexParams = json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"},"symbol":{"type":"string"},"kind":{"type":"string"},"lang":{"type":"string"},"max_results":{"type":"integer"},"summary":{"type":"boolean"}},"required":[],"additionalProperties":false}`)
+	runTestsParams = json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string"},"file":{"type":"string"},"framework":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	runFormatterParams = json.RawMessage(`{"type":"object","properties":{"tool":{"type":"string"},"path":{"type":"string"}},"required":["tool"],"additionalProperties":false}`)
+	reviewChangesParams = json.RawMessage(`{"type":"object","properties":{"scope":{"type":"string"}},"required":[],"additionalProperties":false}`)
+	lspDiagnosticsParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}`)
+	lspDefinitionParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"line":{"type":"integer"},"character":{"type":"integer"}},"required":["path","line","character"],"additionalProperties":false}`)
+	lspFindReferencesParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"line":{"type":"integer"},"character":{"type":"integer"}},"required":["path","line","character"],"additionalProperties":false}`)
+)
+
+func (r *Registry) add(name, desc, effect string, parameters json.RawMessage, fn func(context.Context, json.RawMessage) (Result, error)) {
+	if parameters == nil {
+		parameters = defaultParamSchema
+	}
 	r.tools[name] = Tool{
 		Name: name, Description: desc, Effect: effect,
-		Parameters: defaultParamSchema,
+		Parameters: parameters,
 		Execute:    fn,
 	}
 }

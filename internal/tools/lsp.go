@@ -198,11 +198,14 @@ func (r *Registry) lspDefinition(ctx context.Context, raw json.RawMessage) (Resu
 		if rootRel, err := filepath.Rel(r.root, relFile); err == nil {
 			relFile = rootRel
 		}
-		// Remove double slashes from file URI
 		relFile = filepath.ToSlash(relFile)
 		for strings.HasPrefix(relFile, "/") {
 			relFile = strings.TrimPrefix(relFile, "/")
 		}
+	}
+	clean := filepath.Clean(relFile)
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return Result{}, fmt.Errorf("LSP result path escapes project root: %s", relFile)
 	}
 
 	return Result{
@@ -285,6 +288,10 @@ func (r *Registry) lspFindReferences(ctx context.Context, raw json.RawMessage) (
 			for strings.HasPrefix(relFile, "/") {
 				relFile = strings.TrimPrefix(relFile, "/")
 			}
+		}
+		clean := filepath.Clean(relFile)
+		if clean == ".." || strings.HasPrefix(clean, "../") {
+			return Result{}, fmt.Errorf("LSP result path escapes project root: %s", relFile)
 		}
 		b.WriteString(fmt.Sprintf("  %s:%d:%d\n", relFile, ref.Range.Start.Line+1, ref.Range.Start.Character+1))
 		locations = append(locations, map[string]interface{}{

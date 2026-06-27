@@ -268,7 +268,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (result string, err erro
 				resultText = fmt.Sprintf(`{"ok":false,"summary":"tool failed","content":%q}`, err.Error())
 			}
 			a.messages = append(a.messages, model.Message{Role: "assistant", Content: content})
-			a.messages = append(a.messages, model.Message{Role: "user", Content: "Tool result:\n" + resultText})
+			a.messages = append(a.messages, model.Message{Role: "tool", Content: resultText})
 			continue
 		}
 		a.messages = append(a.messages, model.Message{Role: "assistant", Content: content})
@@ -420,9 +420,12 @@ func filterToolPrompt(prompt string, allowed []string) string {
 	lines := strings.Split(prompt, "\n")
 	for _, line := range lines {
 		if strings.HasPrefix(line, "- ") {
-			name := strings.Fields(line[2:])
-			if len(name) > 0 && !allowedSet[name[0][:len(name[0])-1]] {
-				continue
+			fields := strings.Fields(line[2:])
+			if len(fields) > 0 {
+				toolName := strings.TrimSuffix(fields[0], ":")
+				if !allowedSet[toolName] {
+					continue
+				}
 			}
 		}
 		out.WriteString(line)
@@ -520,22 +523,41 @@ func (a *Agent) executeTool(ctx context.Context, call toolCall) (string, error) 
 	diff, _ := a.tools.DiffPreview(call.Name, call.Arguments)
 	summary := call.Name + " " + string(call.Arguments)
 	a.emit(Event{Type: "tool_requested", Tool: call.Name, Effect: effect, Summary: summary, Detail: diff})
-	if effect == "write" || effect == "shell" || effect == "network" || effect == "destructive" {
-		a.emit(Event{Type: "approval_requested", Tool: call.Name, Effect: effect, Summary: summary, Detail: diff})
-		approved := a.approver != nil && a.approver.Approve(ApprovalRequest{Kind: effect, Summary: summary, Diff: diff})
-		if !approved {
+	approved, denied := a.approvalPolicy(effect, call.Arguments)
+	isApprovalRequired := effect == "write" || effect == "shell" || effect == "network" || effect == "destructive"
+	if isApprovalRequired {
+		if denied {
 			a.emit(Event{Type: "approval_denied", Tool: call.Name, Effect: effect, Summary: summary})
-			if err := a.store.AddToolResult(ctx, callID, "", "approval denied"); err != nil {
+			if err := a.store.AddToolResult(ctx, callID, "", "denied by policy"); err != nil {
 				a.logError("failed to persist tool result: %v", err)
 			}
 			if err := a.store.AddApproval(ctx, a.sessionID, callID, call.Name, effect, summary, false); err != nil {
 				a.logError("failed to persist approval: %v", err)
 			}
-			return `{"ok":false,"summary":"approval denied"}`, nil
+			return `{"ok":false,"summary":"approval denied by policy"}`, nil
 		}
-		a.emit(Event{Type: "approval_approved", Tool: call.Name, Effect: effect, Summary: summary})
-		if err := a.store.AddApproval(ctx, a.sessionID, callID, call.Name, effect, summary, true); err != nil {
-			a.logError("failed to persist approval: %v", err)
+		if approved {
+			a.emit(Event{Type: "approval_auto_approved", Tool: call.Name, Effect: effect, Summary: summary})
+			if err := a.store.AddApproval(ctx, a.sessionID, callID, call.Name, effect, summary, true); err != nil {
+				a.logError("failed to persist approval: %v", err)
+			}
+		} else {
+			a.emit(Event{Type: "approval_requested", Tool: call.Name, Effect: effect, Summary: summary, Detail: diff})
+			userApproved := a.approver != nil && a.approver.Approve(ApprovalRequest{Kind: effect, Summary: summary, Diff: diff})
+			if !userApproved {
+				a.emit(Event{Type: "approval_denied", Tool: call.Name, Effect: effect, Summary: summary})
+				if err := a.store.AddToolResult(ctx, callID, "", "approval denied"); err != nil {
+					a.logError("failed to persist tool result: %v", err)
+				}
+				if err := a.store.AddApproval(ctx, a.sessionID, callID, call.Name, effect, summary, false); err != nil {
+					a.logError("failed to persist approval: %v", err)
+				}
+				return `{"ok":false,"summary":"approval denied"}`, nil
+			}
+			a.emit(Event{Type: "approval_approved", Tool: call.Name, Effect: effect, Summary: summary})
+			if err := a.store.AddApproval(ctx, a.sessionID, callID, call.Name, effect, summary, true); err != nil {
+				a.logError("failed to persist approval: %v", err)
+			}
 		}
 	}
 
@@ -673,6 +695,37 @@ func (a *Agent) emit(event Event) {
 	if a.observer != nil {
 		a.observer.OnEvent(event)
 	}
+}
+
+func (a *Agent) approvalPolicy(effect string, raw json.RawMessage) (approve bool, deny bool) {
+	cfg := a.cfg.Approval
+	if cfg.AutoApprove {
+		return true, false
+	}
+	switch effect {
+	case "write":
+		return policyFromConfig(cfg.WriteFiles)
+	case "shell":
+		return policyFromConfig(cfg.RunCommands)
+	case "network":
+		if tools.IsNetworkCommand(raw) {
+			return policyFromConfig(cfg.Network)
+		}
+		return policyFromConfig(cfg.RunCommands)
+	case "destructive":
+		return false, true
+	}
+	return true, false
+}
+
+func policyFromConfig(val string) (approve bool, deny bool) {
+	switch val {
+	case "allow":
+		return true, false
+	case "deny":
+		return false, true
+	}
+	return false, false
 }
 
 func debugTruncate(s string, n int) string {

@@ -216,7 +216,7 @@ Task: ` + prompt + `
 
 Respond with ONLY a JSON object containing the names of relevant skills:
 {"skills": ["name1", "name2"]}
-Return an empty array if no skills are relevant. Do not include the "project" skill.`
+Return an empty array if no skills are relevant.`
 
 	resp, err := ask(ctx, selectionPrompt)
 	if err != nil {
