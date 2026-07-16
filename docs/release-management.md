@@ -33,7 +33,7 @@ The release CI workflow reads these secrets from the repository:
 |---|---|
 | `GPG_PRIVATE_KEY` | ASCII-armored GPG private key (exported with `gpg --export-secret-keys --armor`) |
 | `GPG_FINGERPRINT` | The fingerprint of the key (e.g. `A1B2C3D4E5F6G7H8`) |
-| `RELEASE_PLEASE_TOKEN` | Personal access token used by Release Please so created tags trigger the release workflow |
+| `RELEASE_PLEASE_TOKEN` | Personal access token used by Release Please so created tags trigger the release workflow; it must also be able to create refs for commits that touch workflow files |
 | `GITHUB_TOKEN` | Automatically provided by GitHub Actions |
 
 ## Versioning
@@ -44,7 +44,9 @@ Qodex follows [Semantic Versioning](https://semver.org/) and uses [Release Pleas
 - **v1.Y.Z**: Stable API and CLI surface.
 - Merged conventional commits on `main` update the release PR and `CHANGELOG.md`.
 - Merging the release PR creates the git tag that triggers `.github/workflows/release.yml`.
-- `RELEASE_PLEASE_TOKEN` should be a fine-grained or classic token with permission to create pull requests and tags in this repository.
+- `RELEASE_PLEASE_TOKEN` should be a fine-grained or classic token with permission to create pull requests, create refs, and create tags in this repository.
+- Fine-grained PATs should include `Contents: Read and write`, `Pull requests: Read and write`, `Workflows: Read and write`, and `Metadata: Read`.
+- Classic PATs should include `repo` and `workflow`.
 
 ## Release Process (Step by Step)
 

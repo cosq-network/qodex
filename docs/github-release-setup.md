@@ -138,13 +138,19 @@ Recommended repository permissions for this repo:
 
 - `Contents: Read and write`
 - `Pull requests: Read and write`
+- `Workflows: Read and write`
 - `Metadata: Read`
 
 Limit the token to this repository if possible.
 
 ### Classic token
 
-If you use a classic token, `repo` scope is the practical choice.
+If you use a classic token, use:
+
+- `repo`
+- `workflow`
+
+The `workflow` scope matters when Release Please needs to create a branch or ref for a commit that changes files under `.github/workflows/`.
 
 ## 6. Add repository secrets
 
@@ -279,6 +285,17 @@ Check:
 - the merge created a `v*` tag
 - `release.yml` ran for that tag
 - `RELEASE_PLEASE_TOKEN` is being used by `.github/workflows/release-please.yml`
+
+### Release Please fails with `Resource not accessible by personal access token`
+
+This usually means `RELEASE_PLEASE_TOKEN` is missing workflow-writing permission for the repository.
+
+Use:
+
+- fine-grained PAT with `Workflows: Read and write`
+- or classic PAT with `repo` and `workflow`
+
+This is especially important when the current `main` commit changes files under `.github/workflows/`.
 
 ### Release workflow fails before publishing
 

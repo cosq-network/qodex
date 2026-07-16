@@ -8,8 +8,38 @@ permissions:
   contents: write
 
 jobs:
+  verify:
+    name: "Verify release build (${{ matrix.os }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: Build
+        env:
+          CGO_ENABLED: 0
+        run: go build -v -ldflags="-X main.version=${GITHUB_REF_NAME#v} -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" ./cmd/qodex
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Run tests
+        run: go test -race -count=1 ./...
+
   release:
-    name: Build and release
+    name: Publish release
+    needs: verify
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -45,9 +75,6 @@ jobs:
         run: gpg --armor --export "${GPG_FINGERPRINT}" > gpg-public-key.asc
         env:
           GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
-
-      - name: Run tests
-        run: go test -race -count=1 ./...
 
       - name: GoReleaser
         uses: goreleaser/goreleaser-action@v6
