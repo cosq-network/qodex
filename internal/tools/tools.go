@@ -50,6 +50,13 @@ func NewRegistry(projectRoot string) *Registry {
 	r.add("write_patch", "Apply a unified diff under the project root", "write", writePatchParams, r.writePatch)
 	r.add("run_command", "Run a command in the project root", "shell", runCommandParams, r.runCommand)
 	r.add("run_script", "Run a pre-approved script from an active skill by description", "shell", runScriptParams, r.runScript)
+	r.add("run_tests", "Run project tests. Accepts pattern, file, framework, and timeout_seconds.", "shell", runTestsParams, r.runTests)
+	r.add("run_formatter", "Run a formatter such as gofmt, ruff, black, or prettier. Accepts tool and optional path.", "shell", runFormatterParams, r.runFormatter)
+	r.add("review_changes", "Review uncommitted changes in the repository. Accepts scope (all, staged, working).", "read", reviewChangesParams, r.reviewChanges)
+	r.add("project_index", "Query the lightweight project file and symbol index. Accepts query, symbol, kind, lang, max_results, and summary.", "read", projectIndexParams, r.projectIndex)
+	r.add("lsp_diagnostics", "Get language server diagnostics for a file. Accepts path.", "read", lspDiagnosticsParams, r.lspDiagnostics)
+	r.add("lsp_definition", "Find the definition of a symbol using a language server. Accepts path, line, and character.", "read", lspDefinitionParams, r.lspDefinition)
+	r.add("lsp_find_references", "Find symbol references using a language server. Accepts path, line, and character.", "read", lspFindReferencesParams, r.lspFindReferences)
 	r.add("git_status", "Show git status", "read", gitStatusParams, r.gitStatus)
 	r.add("git_diff", "Show git diff", "read", gitDiffParams, r.gitDiff)
 	r.add("git_log", "Show git log. Accepts limit (default 20) and oneline (bool).", "read", gitLogParams, r.gitLog)
@@ -132,94 +139,94 @@ func NewRegistry(projectRoot string) *Registry {
 var defaultParamSchema = json.RawMessage(`{"type":"object"}`)
 
 var (
-	listFilesParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"max_results":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	readFileParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"start_line":{"type":"integer"},"end_line":{"type":"integer"}},"required":["path"],"additionalProperties":false}`)
-	searchTextParams = json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"},"path":{"type":"string"},"case_sensitive":{"type":"boolean"}},"required":["query"],"additionalProperties":false}`)
-	writeFileParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"],"additionalProperties":false}`)
-	writePatchParams = json.RawMessage(`{"type":"object","properties":{"patch":{"type":"string"}},"required":["patch"],"additionalProperties":false}`)
-	runCommandParams = json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"shell":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	runScriptParams = json.RawMessage(`{"type":"object","properties":{"description":{"type":"string"}},"required":["description"],"additionalProperties":false}`)
-	gitStatusParams = json.RawMessage(`{"type":"object","properties":{},"required":[],"additionalProperties":false}`)
-	gitDiffParams = json.RawMessage(`{"type":"object","properties":{},"required":[],"additionalProperties":false}`)
-	gitLogParams = json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer"},"oneline":{"type":"boolean"}},"required":[],"additionalProperties":false}`)
-	cmakeConfigureParams = json.RawMessage(`{"type":"object","properties":{"build_dir":{"type":"string"},"source_dir":{"type":"string"},"generator":{"type":"string"},"defs":{"type":"object"}},"required":[],"additionalProperties":false}`)
-	cmakeBuildParams = json.RawMessage(`{"type":"object","properties":{"build_dir":{"type":"string"},"target":{"type":"string"},"config":{"type":"string"}},"required":[],"additionalProperties":false}`)
-	clangFormatParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"in_place":{"type":"boolean"},"style":{"type":"string"}},"required":["path"],"additionalProperties":false}`)
-	clangTidyParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"checks":{"type":"string"},"fix":{"type":"boolean"}},"required":["path"],"additionalProperties":false}`)
-	makeBuildParams = json.RawMessage(`{"type":"object","properties":{"target":{"type":"string"},"build_dir":{"type":"string"},"jobs":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	nmakeBuildParams = json.RawMessage(`{"type":"object","properties":{"target":{"type":"string"},"build_dir":{"type":"string"},"macro":{"type":"object"}},"required":[],"additionalProperties":false}`)
-	curlParams = json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string"},"headers":{"type":"object"},"data":{"type":"string"},"output":{"type":"string"},"location":{"type":"boolean"},"max_time":{"type":"integer"}},"required":["url"],"additionalProperties":false}`)
-	wgetParams = json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"output":{"type":"string"},"recursive":{"type":"boolean"},"page_requisites":{"type":"boolean"},"max_depth":{"type":"integer"},"reject":{"type":"string"},"exclude_directories":{"type":"string"},"continue":{"type":"boolean"}},"required":["url"],"additionalProperties":false}`)
-	javaRunParams = json.RawMessage(`{"type":"object","properties":{"main_class":{"type":"string"},"jar":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"vm_args":{"type":"array","items":{"type":"string"}},"classpath":{"type":"string"}},"required":[],"additionalProperties":false}`)
-	javacCompileParams = json.RawMessage(`{"type":"object","properties":{"source":{"type":"string"},"classpath":{"type":"string"},"output_dir":{"type":"string"},"sourcepath":{"type":"string"},"release":{"type":"string"}},"required":["source"],"additionalProperties":false}`)
-	rgSearchParams = json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"glob":{"type":"string"},"file_type":{"type":"string"},"case_sensitive":{"type":"boolean"},"fixed_strings":{"type":"boolean"},"max_results":{"type":"integer"}},"required":["pattern"],"additionalProperties":false}`)
-	sedEditParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"expression":{"type":"string"},"in_place":{"type":"boolean"}},"required":["path","expression"],"additionalProperties":false}`)
-	base64EncodeParams = json.RawMessage(`{"type":"object","properties":{"input":{"type":"string"},"path":{"type":"string"},"decode":{"type":"boolean"},"wrap":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	projectIndexParams = json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"},"symbol":{"type":"string"},"kind":{"type":"string"},"lang":{"type":"string"},"max_results":{"type":"integer"},"summary":{"type":"boolean"}},"required":[],"additionalProperties":false}`)
-	nodeRunParams = json.RawMessage(`{"type":"object","properties":{"script":{"type":"string"},"eval":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"vm_args":{"type":"array","items":{"type":"string"}},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	npmCommandParams = json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"},"script":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	npxCommandParams = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	nvmUseParams = json.RawMessage(`{"type":"object","properties":{"version":{"type":"string"}},"required":["version"],"additionalProperties":false}`)
-	dotnetRunParams = json.RawMessage(`{"type":"object","properties":{"project":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"configuration":{"type":"string"},"framework":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	dotnetBuildParams = json.RawMessage(`{"type":"object","properties":{"project":{"type":"string"},"configuration":{"type":"string"},"framework":{"type":"string"},"output":{"type":"string"},"no_restore":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	dotnetTestParams = json.RawMessage(`{"type":"object","properties":{"project":{"type":"string"},"filter":{"type":"string"},"configuration":{"type":"string"},"framework":{"type":"string"},"no_build":{"type":"boolean"},"logger":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	msbuildParams = json.RawMessage(`{"type":"object","properties":{"project":{"type":"string"},"target":{"type":"string"},"configuration":{"type":"string"},"property":{"type":"object"},"max_cpu_count":{"type":"integer"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	nugetRestoreParams = json.RawMessage(`{"type":"object","properties":{"project":{"type":"string"},"packages":{"type":"string"},"source":{"type":"array","items":{"type":"string"}},"config_file":{"type":"string"},"force":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	nugetInstallParams = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"version":{"type":"string"},"output_dir":{"type":"string"},"source":{"type":"array","items":{"type":"string"}},"config_file":{"type":"string"},"prerelease":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
-	wingetInstallParams = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"version":{"type":"string"},"scope":{"type":"string"},"source":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
-	chocoInstallParams = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"version":{"type":"string"},"source":{"type":"string"},"force":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
-	aptInstallParams = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"update":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
-	aptGetInstallParams = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"update":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
-	snapInstallParams = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"classic":{"type":"boolean"},"channel":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
-	dnfInstallParams = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"refresh":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
-	brewInstallParams = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"cask":{"type":"boolean"},"tap":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
-	pythonRunParams = json.RawMessage(`{"type":"object","properties":{"script":{"type":"string"},"eval":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"vm_args":{"type":"array","items":{"type":"string"}},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	pipInstallParams = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"version":{"type":"string"},"requirements":{"type":"string"},"index_url":{"type":"string"},"extra_index_url":{"type":"string"},"upgrade":{"type":"boolean"},"user":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
-	condaInstallParams = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"channel":{"type":"string"},"version":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
-	condaCreateParams = json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"},"python":{"type":"string"},"packages":{"type":"array","items":{"type":"string"}},"channel":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["name"],"additionalProperties":false}`)
-	flutterRunParams = json.RawMessage(`{"type":"object","properties":{"device":{"type":"string"},"route":{"type":"string"},"debug":{"type":"boolean"},"verbose":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	flutterBuildParams = json.RawMessage(`{"type":"object","properties":{"targets":{"type":"string"},"device_id":{"type":"string"},"web_renderer":{"type":"string"},"release_mode":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	flutterTestParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	dartRunParams = json.RawMessage(`{"type":"object","properties":{"script":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	dartAnalyzeParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"fatal_warnings":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	dartFormatParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"set_exit_if_changed":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	pubGetParams = json.RawMessage(`{"type":"object","properties":{"working_dir":{"type":"string"},"offline":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	pubUpgradeParams = json.RawMessage(`{"type":"object","properties":{"working_dir":{"type":"string"},"major_only":{"type":"boolean"},"offline":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	pubAddParams = json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"},"version":{"type":"string"},"dev":{"type":"boolean"},"working_dir":{"type":"string"},"offline":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["name"],"additionalProperties":false}`)
-	pubRemoveParams = json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"},"dev":{"type":"boolean"},"working_dir":{"type":"string"},"offline":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["name"],"additionalProperties":false}`)
-	arCreateParams = json.RawMessage(`{"type":"object","properties":{"archive":{"type":"string"},"files":{"type":"array","items":{"type":"string"}},"working_dir":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["archive"],"additionalProperties":false}`)
-	arExtractParams = json.RawMessage(`{"type":"object","properties":{"archive":{"type":"string"},"output_dir":{"type":"string"},"working_dir":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["archive"],"additionalProperties":false}`)
-	arListParams = json.RawMessage(`{"type":"object","properties":{"archive":{"type":"string"},"working_dir":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["archive"],"additionalProperties":false}`)
-	tarCreateParams = json.RawMessage(`{"type":"object","properties":{"archive":{"type":"string"},"files":{"type":"array","items":{"type":"string"}},"compress":{"type":"string"},"working_dir":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["archive"],"additionalProperties":false}`)
-	tarExtractParams = json.RawMessage(`{"type":"object","properties":{"archive":{"type":"string"},"output_dir":{"type":"string"},"compress":{"type":"string"},"strip_components":{"type":"integer"},"working_dir":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["archive"],"additionalProperties":false}`)
-	tarListParams = json.RawMessage(`{"type":"object","properties":{"archive":{"type":"string"},"verbose":{"type":"boolean"},"compress":{"type":"string"},"working_dir":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["archive"],"additionalProperties":false}`)
-	zipCreateParams = json.RawMessage(`{"type":"object","properties":{"archive":{"type":"string"},"files":{"type":"array","items":{"type":"string"}},"working_dir":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["archive"],"additionalProperties":false}`)
-	zipExtractParams = json.RawMessage(`{"type":"object","properties":{"archive":{"type":"string"},"output_dir":{"type":"string"},"working_dir":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["archive"],"additionalProperties":false}`)
-	zipListParams = json.RawMessage(`{"type":"object","properties":{"archive":{"type":"string"},"working_dir":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["archive"],"additionalProperties":false}`)
-	grepSearchParams = json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"include":{"type":"string"},"exclude":{"type":"string"},"case_sensitive":{"type":"boolean"},"fixed_strings":{"type":"boolean"},"recursive":{"type":"boolean"},"max_results":{"type":"integer"},"after_context":{"type":"integer"},"before_context":{"type":"integer"},"context":{"type":"integer"}},"required":["pattern"],"additionalProperties":false}`)
-	findFilesParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"name":{"type":"string"},"type":{"type":"string"},"max_depth":{"type":"integer"},"modified":{"type":"integer"},"size":{"type":"string"},"exec":{"type":"string"},"print0":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	tailFileParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"lines":{"type":"integer"},"bytes":{"type":"integer"},"follow":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["path"],"additionalProperties":false}`)
-	awkProcessParams = json.RawMessage(`{"type":"object","properties":{"script":{"type":"string"},"path":{"type":"string"},"field_separator":{"type":"string"},"vars":{"type":"object"},"timeout_seconds":{"type":"integer"}},"required":["script"],"additionalProperties":false}`)
-	psListParams = json.RawMessage(`{"type":"object","properties":{"all":{"type":"boolean"},"user":{"type":"string"},"output_format":{"type":"string"},"sort":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	chmodChangeParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"mode":{"type":"string"},"recursive":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["path","mode"],"additionalProperties":false}`)
-	chownChangeParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"owner":{"type":"string"},"group":{"type":"string"},"recursive":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["path","owner"],"additionalProperties":false}`)
-	userAddParams = json.RawMessage(`{"type":"object","properties":{"username":{"type":"string"},"home":{"type":"string"},"shell":{"type":"string"},"groups":{"type":"array","items":{"type":"string"}},"system":{"type":"boolean"},"create_home":{"type":"boolean"},"no_create_home":{"type":"boolean"},"uid":{"type":"integer"},"gid":{"type":"integer"},"password":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["username"],"additionalProperties":false}`)
-	userDelParams = json.RawMessage(`{"type":"object","properties":{"username":{"type":"string"},"remove":{"type":"boolean"},"force":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["username"],"additionalProperties":false}`)
-	runTestsParams = json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string"},"file":{"type":"string"},"framework":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	runFormatterParams = json.RawMessage(`{"type":"object","properties":{"tool":{"type":"string"},"path":{"type":"string"}},"required":["tool"],"additionalProperties":false}`)
-	reviewChangesParams = json.RawMessage(`{"type":"object","properties":{"scope":{"type":"string"}},"required":[],"additionalProperties":false}`)
-	lspDiagnosticsParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}`)
-	lspDefinitionParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"line":{"type":"integer"},"character":{"type":"integer"}},"required":["path","line","character"],"additionalProperties":false}`)
+	listFilesParams         = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"max_results":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	readFileParams          = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"start_line":{"type":"integer"},"end_line":{"type":"integer"}},"required":["path"],"additionalProperties":false}`)
+	searchTextParams        = json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"},"path":{"type":"string"},"case_sensitive":{"type":"boolean"}},"required":["query"],"additionalProperties":false}`)
+	writeFileParams         = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"],"additionalProperties":false}`)
+	writePatchParams        = json.RawMessage(`{"type":"object","properties":{"patch":{"type":"string"}},"required":["patch"],"additionalProperties":false}`)
+	runCommandParams        = json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"shell":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	runScriptParams         = json.RawMessage(`{"type":"object","properties":{"description":{"type":"string"}},"required":["description"],"additionalProperties":false}`)
+	gitStatusParams         = json.RawMessage(`{"type":"object","properties":{},"required":[],"additionalProperties":false}`)
+	gitDiffParams           = json.RawMessage(`{"type":"object","properties":{},"required":[],"additionalProperties":false}`)
+	gitLogParams            = json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer"},"oneline":{"type":"boolean"}},"required":[],"additionalProperties":false}`)
+	cmakeConfigureParams    = json.RawMessage(`{"type":"object","properties":{"build_dir":{"type":"string"},"source_dir":{"type":"string"},"generator":{"type":"string"},"defs":{"type":"object"}},"required":[],"additionalProperties":false}`)
+	cmakeBuildParams        = json.RawMessage(`{"type":"object","properties":{"build_dir":{"type":"string"},"target":{"type":"string"},"config":{"type":"string"}},"required":[],"additionalProperties":false}`)
+	clangFormatParams       = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"in_place":{"type":"boolean"},"style":{"type":"string"}},"required":["path"],"additionalProperties":false}`)
+	clangTidyParams         = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"checks":{"type":"string"},"fix":{"type":"boolean"}},"required":["path"],"additionalProperties":false}`)
+	makeBuildParams         = json.RawMessage(`{"type":"object","properties":{"target":{"type":"string"},"build_dir":{"type":"string"},"jobs":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	nmakeBuildParams        = json.RawMessage(`{"type":"object","properties":{"target":{"type":"string"},"build_dir":{"type":"string"},"macro":{"type":"object"}},"required":[],"additionalProperties":false}`)
+	curlParams              = json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string"},"headers":{"type":"object"},"data":{"type":"string"},"output":{"type":"string"},"location":{"type":"boolean"},"max_time":{"type":"integer"}},"required":["url"],"additionalProperties":false}`)
+	wgetParams              = json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"output":{"type":"string"},"recursive":{"type":"boolean"},"page_requisites":{"type":"boolean"},"max_depth":{"type":"integer"},"reject":{"type":"string"},"exclude_directories":{"type":"string"},"continue":{"type":"boolean"}},"required":["url"],"additionalProperties":false}`)
+	javaRunParams           = json.RawMessage(`{"type":"object","properties":{"main_class":{"type":"string"},"jar":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"vm_args":{"type":"array","items":{"type":"string"}},"classpath":{"type":"string"}},"required":[],"additionalProperties":false}`)
+	javacCompileParams      = json.RawMessage(`{"type":"object","properties":{"source":{"type":"string"},"classpath":{"type":"string"},"output_dir":{"type":"string"},"sourcepath":{"type":"string"},"release":{"type":"string"}},"required":["source"],"additionalProperties":false}`)
+	rgSearchParams          = json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"glob":{"type":"string"},"file_type":{"type":"string"},"case_sensitive":{"type":"boolean"},"fixed_strings":{"type":"boolean"},"max_results":{"type":"integer"}},"required":["pattern"],"additionalProperties":false}`)
+	sedEditParams           = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"expression":{"type":"string"},"in_place":{"type":"boolean"}},"required":["path","expression"],"additionalProperties":false}`)
+	base64EncodeParams      = json.RawMessage(`{"type":"object","properties":{"input":{"type":"string"},"path":{"type":"string"},"decode":{"type":"boolean"},"wrap":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	projectIndexParams      = json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"},"symbol":{"type":"string"},"kind":{"type":"string"},"lang":{"type":"string"},"max_results":{"type":"integer"},"summary":{"type":"boolean"}},"required":[],"additionalProperties":false}`)
+	nodeRunParams           = json.RawMessage(`{"type":"object","properties":{"script":{"type":"string"},"eval":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"vm_args":{"type":"array","items":{"type":"string"}},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	npmCommandParams        = json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"},"script":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	npxCommandParams        = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	nvmUseParams            = json.RawMessage(`{"type":"object","properties":{"version":{"type":"string"}},"required":["version"],"additionalProperties":false}`)
+	dotnetRunParams         = json.RawMessage(`{"type":"object","properties":{"project":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"configuration":{"type":"string"},"framework":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	dotnetBuildParams       = json.RawMessage(`{"type":"object","properties":{"project":{"type":"string"},"configuration":{"type":"string"},"framework":{"type":"string"},"output":{"type":"string"},"no_restore":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	dotnetTestParams        = json.RawMessage(`{"type":"object","properties":{"project":{"type":"string"},"filter":{"type":"string"},"configuration":{"type":"string"},"framework":{"type":"string"},"no_build":{"type":"boolean"},"logger":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	msbuildParams           = json.RawMessage(`{"type":"object","properties":{"project":{"type":"string"},"target":{"type":"string"},"configuration":{"type":"string"},"property":{"type":"object"},"max_cpu_count":{"type":"integer"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	nugetRestoreParams      = json.RawMessage(`{"type":"object","properties":{"project":{"type":"string"},"packages":{"type":"string"},"source":{"type":"array","items":{"type":"string"}},"config_file":{"type":"string"},"force":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	nugetInstallParams      = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"version":{"type":"string"},"output_dir":{"type":"string"},"source":{"type":"array","items":{"type":"string"}},"config_file":{"type":"string"},"prerelease":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
+	wingetInstallParams     = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"version":{"type":"string"},"scope":{"type":"string"},"source":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
+	chocoInstallParams      = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"version":{"type":"string"},"source":{"type":"string"},"force":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
+	aptInstallParams        = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"update":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
+	aptGetInstallParams     = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"update":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
+	snapInstallParams       = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"classic":{"type":"boolean"},"channel":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
+	dnfInstallParams        = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"refresh":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
+	brewInstallParams       = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"cask":{"type":"boolean"},"tap":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
+	pythonRunParams         = json.RawMessage(`{"type":"object","properties":{"script":{"type":"string"},"eval":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"vm_args":{"type":"array","items":{"type":"string"}},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	pipInstallParams        = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"version":{"type":"string"},"requirements":{"type":"string"},"index_url":{"type":"string"},"extra_index_url":{"type":"string"},"upgrade":{"type":"boolean"},"user":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
+	condaInstallParams      = json.RawMessage(`{"type":"object","properties":{"package":{"type":"string"},"channel":{"type":"string"},"version":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["package"],"additionalProperties":false}`)
+	condaCreateParams       = json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"},"python":{"type":"string"},"packages":{"type":"array","items":{"type":"string"}},"channel":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["name"],"additionalProperties":false}`)
+	flutterRunParams        = json.RawMessage(`{"type":"object","properties":{"device":{"type":"string"},"route":{"type":"string"},"debug":{"type":"boolean"},"verbose":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	flutterBuildParams      = json.RawMessage(`{"type":"object","properties":{"targets":{"type":"string"},"device_id":{"type":"string"},"web_renderer":{"type":"string"},"release_mode":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	flutterTestParams       = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	dartRunParams           = json.RawMessage(`{"type":"object","properties":{"script":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	dartAnalyzeParams       = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"fatal_warnings":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	dartFormatParams        = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"set_exit_if_changed":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	pubGetParams            = json.RawMessage(`{"type":"object","properties":{"working_dir":{"type":"string"},"offline":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	pubUpgradeParams        = json.RawMessage(`{"type":"object","properties":{"working_dir":{"type":"string"},"major_only":{"type":"boolean"},"offline":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	pubAddParams            = json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"},"version":{"type":"string"},"dev":{"type":"boolean"},"working_dir":{"type":"string"},"offline":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["name"],"additionalProperties":false}`)
+	pubRemoveParams         = json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"},"dev":{"type":"boolean"},"working_dir":{"type":"string"},"offline":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["name"],"additionalProperties":false}`)
+	arCreateParams          = json.RawMessage(`{"type":"object","properties":{"archive":{"type":"string"},"files":{"type":"array","items":{"type":"string"}},"working_dir":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["archive"],"additionalProperties":false}`)
+	arExtractParams         = json.RawMessage(`{"type":"object","properties":{"archive":{"type":"string"},"output_dir":{"type":"string"},"working_dir":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["archive"],"additionalProperties":false}`)
+	arListParams            = json.RawMessage(`{"type":"object","properties":{"archive":{"type":"string"},"working_dir":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["archive"],"additionalProperties":false}`)
+	tarCreateParams         = json.RawMessage(`{"type":"object","properties":{"archive":{"type":"string"},"files":{"type":"array","items":{"type":"string"}},"compress":{"type":"string"},"working_dir":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["archive"],"additionalProperties":false}`)
+	tarExtractParams        = json.RawMessage(`{"type":"object","properties":{"archive":{"type":"string"},"output_dir":{"type":"string"},"compress":{"type":"string"},"strip_components":{"type":"integer"},"working_dir":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["archive"],"additionalProperties":false}`)
+	tarListParams           = json.RawMessage(`{"type":"object","properties":{"archive":{"type":"string"},"verbose":{"type":"boolean"},"compress":{"type":"string"},"working_dir":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["archive"],"additionalProperties":false}`)
+	zipCreateParams         = json.RawMessage(`{"type":"object","properties":{"archive":{"type":"string"},"files":{"type":"array","items":{"type":"string"}},"working_dir":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["archive"],"additionalProperties":false}`)
+	zipExtractParams        = json.RawMessage(`{"type":"object","properties":{"archive":{"type":"string"},"output_dir":{"type":"string"},"working_dir":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["archive"],"additionalProperties":false}`)
+	zipListParams           = json.RawMessage(`{"type":"object","properties":{"archive":{"type":"string"},"working_dir":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["archive"],"additionalProperties":false}`)
+	grepSearchParams        = json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"include":{"type":"string"},"exclude":{"type":"string"},"case_sensitive":{"type":"boolean"},"fixed_strings":{"type":"boolean"},"recursive":{"type":"boolean"},"max_results":{"type":"integer"},"after_context":{"type":"integer"},"before_context":{"type":"integer"},"context":{"type":"integer"}},"required":["pattern"],"additionalProperties":false}`)
+	findFilesParams         = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"name":{"type":"string"},"type":{"type":"string"},"max_depth":{"type":"integer"},"modified":{"type":"integer"},"size":{"type":"string"},"exec":{"type":"string"},"print0":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	tailFileParams          = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"lines":{"type":"integer"},"bytes":{"type":"integer"},"follow":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["path"],"additionalProperties":false}`)
+	awkProcessParams        = json.RawMessage(`{"type":"object","properties":{"script":{"type":"string"},"path":{"type":"string"},"field_separator":{"type":"string"},"vars":{"type":"object"},"timeout_seconds":{"type":"integer"}},"required":["script"],"additionalProperties":false}`)
+	psListParams            = json.RawMessage(`{"type":"object","properties":{"all":{"type":"boolean"},"user":{"type":"string"},"output_format":{"type":"string"},"sort":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	chmodChangeParams       = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"mode":{"type":"string"},"recursive":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["path","mode"],"additionalProperties":false}`)
+	chownChangeParams       = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"owner":{"type":"string"},"group":{"type":"string"},"recursive":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["path","owner"],"additionalProperties":false}`)
+	userAddParams           = json.RawMessage(`{"type":"object","properties":{"username":{"type":"string"},"home":{"type":"string"},"shell":{"type":"string"},"groups":{"type":"array","items":{"type":"string"}},"system":{"type":"boolean"},"create_home":{"type":"boolean"},"no_create_home":{"type":"boolean"},"uid":{"type":"integer"},"gid":{"type":"integer"},"password":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["username"],"additionalProperties":false}`)
+	userDelParams           = json.RawMessage(`{"type":"object","properties":{"username":{"type":"string"},"remove":{"type":"boolean"},"force":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["username"],"additionalProperties":false}`)
+	runTestsParams          = json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string"},"file":{"type":"string"},"framework":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	runFormatterParams      = json.RawMessage(`{"type":"object","properties":{"tool":{"type":"string"},"path":{"type":"string"}},"required":["tool"],"additionalProperties":false}`)
+	reviewChangesParams     = json.RawMessage(`{"type":"object","properties":{"scope":{"type":"string"}},"required":[],"additionalProperties":false}`)
+	lspDiagnosticsParams    = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}`)
+	lspDefinitionParams     = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"line":{"type":"integer"},"character":{"type":"integer"}},"required":["path","line","character"],"additionalProperties":false}`)
 	lspFindReferencesParams = json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"line":{"type":"integer"},"character":{"type":"integer"}},"required":["path","line","character"],"additionalProperties":false}`)
-	dockerBuildParams = json.RawMessage(`{"type":"object","properties":{"dockerfile":{"type":"string"},"tag":{"type":"string"},"context":{"type":"string"},"no_cache":{"type":"boolean"},"pull":{"type":"boolean"},"build_args":{"type":"object"},"target":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	dockerRunParams = json.RawMessage(`{"type":"object","properties":{"image":{"type":"string"},"command":{"type":"array","items":{"type":"string"}},"name":{"type":"string"},"ports":{"type":"array","items":{"type":"string"}},"volumes":{"type":"array","items":{"type":"string"}},"env":{"type":"object"},"detach":{"type":"boolean"},"rm":{"type":"boolean"},"network":{"type":"string"},"privileged":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["image"],"additionalProperties":false}`)
-	dockerComposeUpParams = json.RawMessage(`{"type":"object","properties":{"file":{"type":"string"},"project":{"type":"string"},"services":{"type":"array","items":{"type":"string"}},"detach":{"type":"boolean"},"build":{"type":"boolean"},"force_recreate":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	dockerBuildParams       = json.RawMessage(`{"type":"object","properties":{"dockerfile":{"type":"string"},"tag":{"type":"string"},"context":{"type":"string"},"no_cache":{"type":"boolean"},"pull":{"type":"boolean"},"build_args":{"type":"object"},"target":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	dockerRunParams         = json.RawMessage(`{"type":"object","properties":{"image":{"type":"string"},"command":{"type":"array","items":{"type":"string"}},"name":{"type":"string"},"ports":{"type":"array","items":{"type":"string"}},"volumes":{"type":"array","items":{"type":"string"}},"env":{"type":"object"},"detach":{"type":"boolean"},"rm":{"type":"boolean"},"network":{"type":"string"},"privileged":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":["image"],"additionalProperties":false}`)
+	dockerComposeUpParams   = json.RawMessage(`{"type":"object","properties":{"file":{"type":"string"},"project":{"type":"string"},"services":{"type":"array","items":{"type":"string"}},"detach":{"type":"boolean"},"build":{"type":"boolean"},"force_recreate":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
 	dockerComposeDownParams = json.RawMessage(`{"type":"object","properties":{"file":{"type":"string"},"project":{"type":"string"},"volumes":{"type":"boolean"},"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	qemuRunParams = json.RawMessage(`{"type":"object","properties":{"image":{"type":"string"},"memory":{"type":"string"},"smp":{"type":"integer"},"cpu":{"type":"string"},"drive":{"type":"string"},"net":{"type":"string"},"nographic":{"type":"boolean"},"monitor":{"type":"string"},"serial":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"timeout_seconds":{"type":"integer"}},"required":["image"],"additionalProperties":false}`)
-	adbDevicesParams = json.RawMessage(`{"type":"object","properties":{"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
-	adbShellParams = json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"},"serial":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["command"],"additionalProperties":false}`)
-	adbPushParams = json.RawMessage(`{"type":"object","properties":{"local":{"type":"string"},"remote":{"type":"string"},"serial":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["local","remote"],"additionalProperties":false}`)
-	adbPullParams = json.RawMessage(`{"type":"object","properties":{"remote":{"type":"string"},"local":{"type":"string"},"serial":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["remote","local"],"additionalProperties":false}`)
+	qemuRunParams           = json.RawMessage(`{"type":"object","properties":{"image":{"type":"string"},"memory":{"type":"string"},"smp":{"type":"integer"},"cpu":{"type":"string"},"drive":{"type":"string"},"net":{"type":"string"},"nographic":{"type":"boolean"},"monitor":{"type":"string"},"serial":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"timeout_seconds":{"type":"integer"}},"required":["image"],"additionalProperties":false}`)
+	adbDevicesParams        = json.RawMessage(`{"type":"object","properties":{"timeout_seconds":{"type":"integer"}},"required":[],"additionalProperties":false}`)
+	adbShellParams          = json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"},"serial":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["command"],"additionalProperties":false}`)
+	adbPushParams           = json.RawMessage(`{"type":"object","properties":{"local":{"type":"string"},"remote":{"type":"string"},"serial":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["local","remote"],"additionalProperties":false}`)
+	adbPullParams           = json.RawMessage(`{"type":"object","properties":{"remote":{"type":"string"},"local":{"type":"string"},"serial":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["remote","local"],"additionalProperties":false}`)
 )
 
 func (r *Registry) add(name, desc, effect string, parameters json.RawMessage, fn func(context.Context, json.RawMessage) (Result, error)) {
@@ -1044,62 +1051,62 @@ func (r *Registry) runTests(ctx context.Context, raw json.RawMessage) (Result, e
 	summary := ""
 	var content string
 
-		switch args.Framework {
-		case "go":
-			argv := []string{"go", "test"}
+	switch args.Framework {
+	case "go":
+		argv := []string{"go", "test"}
+		if args.Pattern != "" {
+			argv = append(argv, args.Pattern)
+		}
+		if args.File != "" {
+			argv = append(argv, args.File)
+		}
+		cmd := exec.CommandContext(cctx, "go", argv[1:]...)
+		cmd.Dir = r.root
+		out, err := runWithKill(cctx, cmd)
+		summary = fmt.Sprintf("Ran go test %s", args.Pattern)
+		content = string(out)
+		if err != nil {
+			return Result{OK: false, Summary: "Tests failed", Content: truncate(content, 20000)}, err
+		}
+		return Result{OK: true, Summary: summary, Content: truncate(content, 20000), Metadata: map[string]interface{}{"shell": false, "network": false}}, nil
+
+	case "pytest", "python":
+		argv := []string{"python", "-m", "pytest"}
+		if args.Pattern != "" {
+			argv = append(argv, args.Pattern)
+		}
+		if args.File != "" {
+			argv = append(argv, args.File)
+		}
+		cmd := exec.CommandContext(cctx, "python", argv[1:]...)
+		cmd.Dir = r.root
+		out, err := runWithKill(cctx, cmd)
+		summary = fmt.Sprintf("Ran pytest %s", args.Pattern)
+		content = string(out)
+		if err != nil {
+			return Result{OK: false, Summary: "Tests failed", Content: truncate(content, 20000)}, err
+		}
+		return Result{OK: true, Summary: summary, Content: truncate(content, 20000), Metadata: map[string]interface{}{"shell": false, "network": false}}, nil
+
+	case "jest", "node":
+		if hasFile(r.root, "package.json") {
+			argv := []string{"npx", "jest"}
 			if args.Pattern != "" {
 				argv = append(argv, args.Pattern)
 			}
 			if args.File != "" {
 				argv = append(argv, args.File)
 			}
-			cmd := exec.CommandContext(cctx, "go", argv[1:]...)
+			cmd := exec.CommandContext(cctx, "npx", argv...)
 			cmd.Dir = r.root
 			out, err := runWithKill(cctx, cmd)
-			summary = fmt.Sprintf("Ran go test %s", args.Pattern)
+			summary = fmt.Sprintf("Ran jest %s", args.Pattern)
 			content = string(out)
 			if err != nil {
 				return Result{OK: false, Summary: "Tests failed", Content: truncate(content, 20000)}, err
 			}
 			return Result{OK: true, Summary: summary, Content: truncate(content, 20000), Metadata: map[string]interface{}{"shell": false, "network": false}}, nil
-
-		case "pytest", "python":
-			argv := []string{"python", "-m", "pytest"}
-			if args.Pattern != "" {
-				argv = append(argv, args.Pattern)
-			}
-			if args.File != "" {
-				argv = append(argv, args.File)
-			}
-			cmd := exec.CommandContext(cctx, "python", argv[1:]...)
-			cmd.Dir = r.root
-			out, err := runWithKill(cctx, cmd)
-			summary = fmt.Sprintf("Ran pytest %s", args.Pattern)
-			content = string(out)
-			if err != nil {
-				return Result{OK: false, Summary: "Tests failed", Content: truncate(content, 20000)}, err
-			}
-			return Result{OK: true, Summary: summary, Content: truncate(content, 20000), Metadata: map[string]interface{}{"shell": false, "network": false}}, nil
-
-		case "jest", "node":
-			if hasFile(r.root, "package.json") {
-				argv := []string{"npx", "jest"}
-				if args.Pattern != "" {
-					argv = append(argv, args.Pattern)
-				}
-				if args.File != "" {
-					argv = append(argv, args.File)
-				}
-				cmd := exec.CommandContext(cctx, "npx", argv...)
-				cmd.Dir = r.root
-				out, err := runWithKill(cctx, cmd)
-				summary = fmt.Sprintf("Ran jest %s", args.Pattern)
-				content = string(out)
-				if err != nil {
-					return Result{OK: false, Summary: "Tests failed", Content: truncate(content, 20000)}, err
-				}
-				return Result{OK: true, Summary: summary, Content: truncate(content, 20000), Metadata: map[string]interface{}{"shell": false, "network": false}}, nil
-			}
+		}
 
 	default:
 		if args.Framework == "" {
@@ -1275,7 +1282,7 @@ func (r *Registry) reviewChanges(ctx context.Context, raw json.RawMessage) (Resu
 		diffArgs = []string{"diff"}
 	} else {
 		// all: staged + working
-		diffArgs = []string{"diff", "HEAD"}  // includes both staged and unstaged
+		diffArgs = []string{"diff", "HEAD"} // includes both staged and unstaged
 	}
 
 	cmd := exec.CommandContext(cctx, "git", diffArgs...)
@@ -1372,9 +1379,9 @@ func validatePatchPaths(patch string) error {
 
 func (r *Registry) cmakeConfigure(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		BuildDir  string `json:"build_dir"`
-		SourceDir string `json:"source_dir"`
-		Generator string `json:"generator"`
+		BuildDir  string            `json:"build_dir"`
+		SourceDir string            `json:"source_dir"`
+		Generator string            `json:"generator"`
 		Defs      map[string]string `json:"defs"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
@@ -1616,19 +1623,19 @@ func (r *Registry) nmakeBuild(ctx context.Context, raw json.RawMessage) (Result,
 	if err != nil {
 		return res, err
 	}
- 	return res, nil
+	return res, nil
 }
 
 func (r *Registry) dockerBuild(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Dockerfile   string            `json:"dockerfile"`
-		Tag          string            `json:"tag"`
-		Context      string            `json:"context"`
-		NoCache      bool              `json:"no_cache"`
-		Pull         bool              `json:"pull"`
-		BuildArgs    map[string]string `json:"build_args"`
-		Target       string            `json:"target"`
-		TimeoutSeconds int             `json:"timeout_seconds"`
+		Dockerfile     string            `json:"dockerfile"`
+		Tag            string            `json:"tag"`
+		Context        string            `json:"context"`
+		NoCache        bool              `json:"no_cache"`
+		Pull           bool              `json:"pull"`
+		BuildArgs      map[string]string `json:"build_args"`
+		Target         string            `json:"target"`
+		TimeoutSeconds int               `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -1688,17 +1695,17 @@ func (r *Registry) dockerBuild(ctx context.Context, raw json.RawMessage) (Result
 
 func (r *Registry) dockerRun(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Image      string            `json:"image"`
-		Command    []string          `json:"command"`
-		Name       string            `json:"name"`
-		Ports      []string          `json:"ports"`
-		Volumes    []string          `json:"volumes"`
-		Env        map[string]string `json:"env"`
-		Detach     bool              `json:"detach"`
-		Rm         bool              `json:"rm"`
-		Network    string            `json:"network"`
-		Privileged bool              `json:"privileged"`
-		TimeoutSeconds int           `json:"timeout_seconds"`
+		Image          string            `json:"image"`
+		Command        []string          `json:"command"`
+		Name           string            `json:"name"`
+		Ports          []string          `json:"ports"`
+		Volumes        []string          `json:"volumes"`
+		Env            map[string]string `json:"env"`
+		Detach         bool              `json:"detach"`
+		Rm             bool              `json:"rm"`
+		Network        string            `json:"network"`
+		Privileged     bool              `json:"privileged"`
+		TimeoutSeconds int               `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -1759,13 +1766,13 @@ func (r *Registry) dockerRun(ctx context.Context, raw json.RawMessage) (Result, 
 
 func (r *Registry) dockerComposeUp(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		File          string   `json:"file"`
-		Project       string   `json:"project"`
-		Services      []string `json:"services"`
-		Detach        bool     `json:"detach"`
-		Build         bool     `json:"build"`
-		ForceRecreate bool     `json:"force_recreate"`
-		TimeoutSeconds int    `json:"timeout_seconds"`
+		File           string   `json:"file"`
+		Project        string   `json:"project"`
+		Services       []string `json:"services"`
+		Detach         bool     `json:"detach"`
+		Build          bool     `json:"build"`
+		ForceRecreate  bool     `json:"force_recreate"`
+		TimeoutSeconds int      `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -1817,10 +1824,10 @@ func (r *Registry) dockerComposeUp(ctx context.Context, raw json.RawMessage) (Re
 
 func (r *Registry) dockerComposeDown(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		File          string `json:"file"`
-		Project       string `json:"project"`
-		Volumes       bool   `json:"volumes"`
-		TimeoutSeconds int  `json:"timeout_seconds"`
+		File           string `json:"file"`
+		Project        string `json:"project"`
+		Volumes        bool   `json:"volumes"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -1860,17 +1867,17 @@ func (r *Registry) dockerComposeDown(ctx context.Context, raw json.RawMessage) (
 
 func (r *Registry) qemuRun(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Image         string   `json:"image"`
-		Memory        string   `json:"memory"`
-		Smp           int      `json:"smp"`
-		Cpu           string   `json:"cpu"`
-		Drive         string   `json:"drive"`
-		Net           string   `json:"net"`
-		Nographic     bool     `json:"nographic"`
-		Monitor       string   `json:"monitor"`
-		Serial        string   `json:"serial"`
-		Args          []string `json:"args"`
-		TimeoutSeconds int    `json:"timeout_seconds"`
+		Image          string   `json:"image"`
+		Memory         string   `json:"memory"`
+		Smp            int      `json:"smp"`
+		Cpu            string   `json:"cpu"`
+		Drive          string   `json:"drive"`
+		Net            string   `json:"net"`
+		Nographic      bool     `json:"nographic"`
+		Monitor        string   `json:"monitor"`
+		Serial         string   `json:"serial"`
+		Args           []string `json:"args"`
+		TimeoutSeconds int      `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -1962,9 +1969,9 @@ func (r *Registry) adbDevices(ctx context.Context, raw json.RawMessage) (Result,
 
 func (r *Registry) adbShell(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Command       string `json:"command"`
-		Serial        string `json:"serial"`
-		TimeoutSeconds int  `json:"timeout_seconds"`
+		Command        string `json:"command"`
+		Serial         string `json:"serial"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -2000,10 +2007,10 @@ func (r *Registry) adbShell(ctx context.Context, raw json.RawMessage) (Result, e
 
 func (r *Registry) adbPush(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Local         string `json:"local"`
-		Remote        string `json:"remote"`
-		Serial        string `json:"serial"`
-		TimeoutSeconds int  `json:"timeout_seconds"`
+		Local          string `json:"local"`
+		Remote         string `json:"remote"`
+		Serial         string `json:"serial"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -2046,10 +2053,10 @@ func (r *Registry) adbPush(ctx context.Context, raw json.RawMessage) (Result, er
 
 func (r *Registry) adbPull(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Remote        string `json:"remote"`
-		Local         string `json:"local"`
-		Serial        string `json:"serial"`
-		TimeoutSeconds int  `json:"timeout_seconds"`
+		Remote         string `json:"remote"`
+		Local          string `json:"local"`
+		Serial         string `json:"serial"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -2163,15 +2170,15 @@ func (r *Registry) grepSearch(ctx context.Context, raw json.RawMessage) (Result,
 
 func (r *Registry) findFiles(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Path        string `json:"path"`
-		Name        string `json:"name"`
-		Type        string `json:"type"`
-		MaxDepth    int    `json:"max_depth"`
-		Modified    int    `json:"modified"`
-		Size        string `json:"size"`
-		Exec        string `json:"exec"`
-		Print0      bool   `json:"print0"`
-		TimeoutSeconds int `json:"timeout_seconds"`
+		Path           string `json:"path"`
+		Name           string `json:"name"`
+		Type           string `json:"type"`
+		MaxDepth       int    `json:"max_depth"`
+		Modified       int    `json:"modified"`
+		Size           string `json:"size"`
+		Exec           string `json:"exec"`
+		Print0         bool   `json:"print0"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -2228,11 +2235,11 @@ func (r *Registry) findFiles(ctx context.Context, raw json.RawMessage) (Result, 
 
 func (r *Registry) tailFile(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Path          string `json:"path"`
-		Lines         int    `json:"lines"`
-		Bytes         int    `json:"bytes"`
-		Follow        bool   `json:"follow"`
-		TimeoutSeconds int  `json:"timeout_seconds"`
+		Path           string `json:"path"`
+		Lines          int    `json:"lines"`
+		Bytes          int    `json:"bytes"`
+		Follow         bool   `json:"follow"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -2285,11 +2292,11 @@ func (r *Registry) tailFile(ctx context.Context, raw json.RawMessage) (Result, e
 
 func (r *Registry) awkProcess(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Script         string          `json:"script"`
-		Path           string          `json:"path"`
-		FieldSeparator string          `json:"field_separator"`
+		Script         string            `json:"script"`
+		Path           string            `json:"path"`
+		FieldSeparator string            `json:"field_separator"`
 		Vars           map[string]string `json:"vars"`
-		TimeoutSeconds int             `json:"timeout_seconds"`
+		TimeoutSeconds int               `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -2338,11 +2345,11 @@ func (r *Registry) awkProcess(ctx context.Context, raw json.RawMessage) (Result,
 
 func (r *Registry) psList(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		All          bool   `json:"all"`
-		User         string `json:"user"`
-		OutputFormat string `json:"output_format"`
-		Sort         string `json:"sort"`
-		TimeoutSeconds int `json:"timeout_seconds"`
+		All            bool   `json:"all"`
+		User           string `json:"user"`
+		OutputFormat   string `json:"output_format"`
+		Sort           string `json:"sort"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -2484,17 +2491,17 @@ func (r *Registry) chownChange(ctx context.Context, raw json.RawMessage) (Result
 
 func (r *Registry) userAdd(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Username     string   `json:"username"`
-		Home         string   `json:"home"`
-		Shell        string   `json:"shell"`
-		Groups       []string `json:"groups"`
-		System       bool     `json:"system"`
-		CreateHome   bool     `json:"create_home"`
-		NoCreateHome bool     `json:"no_create_home"`
-		UID          int      `json:"uid"`
-		GID          int      `json:"gid"`
-		Password     string   `json:"password"`
-		TimeoutSeconds int   `json:"timeout_seconds"`
+		Username       string   `json:"username"`
+		Home           string   `json:"home"`
+		Shell          string   `json:"shell"`
+		Groups         []string `json:"groups"`
+		System         bool     `json:"system"`
+		CreateHome     bool     `json:"create_home"`
+		NoCreateHome   bool     `json:"no_create_home"`
+		UID            int      `json:"uid"`
+		GID            int      `json:"gid"`
+		Password       string   `json:"password"`
+		TimeoutSeconds int      `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -2595,10 +2602,10 @@ func (r *Registry) userDel(ctx context.Context, raw json.RawMessage) (Result, er
 
 func (r *Registry) arCreate(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Archive    string   `json:"archive"`
-		Files      []string `json:"files"`
-		WorkingDir string   `json:"working_dir"`
-		TimeoutSeconds int  `json:"timeout_seconds"`
+		Archive        string   `json:"archive"`
+		Files          []string `json:"files"`
+		WorkingDir     string   `json:"working_dir"`
+		TimeoutSeconds int      `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -2652,10 +2659,10 @@ func (r *Registry) arCreate(ctx context.Context, raw json.RawMessage) (Result, e
 
 func (r *Registry) arExtract(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Archive    string `json:"archive"`
-		OutputDir  string `json:"output_dir"`
-		WorkingDir string `json:"working_dir"`
-		TimeoutSeconds int `json:"timeout_seconds"`
+		Archive        string `json:"archive"`
+		OutputDir      string `json:"output_dir"`
+		WorkingDir     string `json:"working_dir"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -2714,9 +2721,9 @@ func (r *Registry) arExtract(ctx context.Context, raw json.RawMessage) (Result, 
 
 func (r *Registry) arList(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Archive    string `json:"archive"`
-		WorkingDir string `json:"working_dir"`
-		TimeoutSeconds int `json:"timeout_seconds"`
+		Archive        string `json:"archive"`
+		WorkingDir     string `json:"working_dir"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -2763,11 +2770,11 @@ func (r *Registry) arList(ctx context.Context, raw json.RawMessage) (Result, err
 
 func (r *Registry) tarCreate(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Archive    string   `json:"archive"`
-		Files      []string `json:"files"`
-		Compress   string   `json:"compress"`
-		WorkingDir string   `json:"working_dir"`
-		TimeoutSeconds int  `json:"timeout_seconds"`
+		Archive        string   `json:"archive"`
+		Files          []string `json:"files"`
+		Compress       string   `json:"compress"`
+		WorkingDir     string   `json:"working_dir"`
+		TimeoutSeconds int      `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -2914,10 +2921,10 @@ func (r *Registry) tarExtract(ctx context.Context, raw json.RawMessage) (Result,
 func (r *Registry) tarList(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
 		Archive        string `json:"archive"`
-		Verbose       bool   `json:"verbose"`
-		Compress      string `json:"compress"`
-		WorkingDir    string `json:"working_dir"`
-		TimeoutSeconds int  `json:"timeout_seconds"`
+		Verbose        bool   `json:"verbose"`
+		Compress       string `json:"compress"`
+		WorkingDir     string `json:"working_dir"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -2979,10 +2986,10 @@ func (r *Registry) tarList(ctx context.Context, raw json.RawMessage) (Result, er
 
 func (r *Registry) zipCreate(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Archive    string   `json:"archive"`
-		Files      []string `json:"files"`
-		WorkingDir string   `json:"working_dir"`
-		TimeoutSeconds int  `json:"timeout_seconds"`
+		Archive        string   `json:"archive"`
+		Files          []string `json:"files"`
+		WorkingDir     string   `json:"working_dir"`
+		TimeoutSeconds int      `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -3036,10 +3043,10 @@ func (r *Registry) zipCreate(ctx context.Context, raw json.RawMessage) (Result, 
 
 func (r *Registry) zipExtract(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Archive    string `json:"archive"`
-		OutputDir  string `json:"output_dir"`
-		WorkingDir string `json:"working_dir"`
-		TimeoutSeconds int `json:"timeout_seconds"`
+		Archive        string `json:"archive"`
+		OutputDir      string `json:"output_dir"`
+		WorkingDir     string `json:"working_dir"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -3098,9 +3105,9 @@ func (r *Registry) zipExtract(ctx context.Context, raw json.RawMessage) (Result,
 
 func (r *Registry) zipList(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Archive     string `json:"archive"`
-		WorkingDir  string `json:"working_dir"`
-		TimeoutSeconds int `json:"timeout_seconds"`
+		Archive        string `json:"archive"`
+		WorkingDir     string `json:"working_dir"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -3147,11 +3154,11 @@ func (r *Registry) zipList(ctx context.Context, raw json.RawMessage) (Result, er
 
 func (r *Registry) flutterRun(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Device       string `json:"device"`
-		Route        string `json:"route"`
-		Debug        bool   `json:"debug"`
-		Verbose      bool   `json:"verbose"`
-		TimeoutSeconds int `json:"timeout_seconds"`
+		Device         string `json:"device"`
+		Route          string `json:"route"`
+		Debug          bool   `json:"debug"`
+		Verbose        bool   `json:"verbose"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -3193,11 +3200,11 @@ func (r *Registry) flutterRun(ctx context.Context, raw json.RawMessage) (Result,
 
 func (r *Registry) flutterBuild(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Targets       string `json:"targets"`
-		DeviceID      string `json:"device_id"`
-		WebRenderer   string `json:"web_renderer"`
-		ReleaseMode   string `json:"release_mode"`
-		TimeoutSeconds int `json:"timeout_seconds"`
+		Targets        string `json:"targets"`
+		DeviceID       string `json:"device_id"`
+		WebRenderer    string `json:"web_renderer"`
+		ReleaseMode    string `json:"release_mode"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -3236,9 +3243,9 @@ func (r *Registry) flutterBuild(ctx context.Context, raw json.RawMessage) (Resul
 
 func (r *Registry) flutterTest(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Path          string   `json:"path"`
-		Tags          []string `json:"tags"`
-		TimeoutSeconds int    `json:"timeout_seconds"`
+		Path           string   `json:"path"`
+		Tags           []string `json:"tags"`
+		TimeoutSeconds int      `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -3608,11 +3615,11 @@ func (r *Registry) pubRemove(ctx context.Context, raw json.RawMessage) (Result, 
 
 func (r *Registry) pythonRun(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Script       string   `json:"script"`
-		Eval         string   `json:"eval"`
-		Args         []string `json:"args"`
-		VMArgs       []string `json:"vm_args"`
-		TimeoutSeconds int   `json:"timeout_seconds"`
+		Script         string   `json:"script"`
+		Eval           string   `json:"eval"`
+		Args           []string `json:"args"`
+		VMArgs         []string `json:"vm_args"`
+		TimeoutSeconds int      `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -3663,11 +3670,11 @@ func (r *Registry) pythonRun(ctx context.Context, raw json.RawMessage) (Result, 
 
 func (r *Registry) python3Run(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Script       string   `json:"script"`
-		Eval         string   `json:"eval"`
-		Args         []string `json:"args"`
-		VMArgs       []string `json:"vm_args"`
-		TimeoutSeconds int   `json:"timeout_seconds"`
+		Script         string   `json:"script"`
+		Eval           string   `json:"eval"`
+		Args           []string `json:"args"`
+		VMArgs         []string `json:"vm_args"`
+		TimeoutSeconds int      `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -3718,13 +3725,13 @@ func (r *Registry) python3Run(ctx context.Context, raw json.RawMessage) (Result,
 
 func (r *Registry) pipInstall(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Package       string   `json:"package"`
-		Version       string   `json:"version"`
-		Requirements  string   `json:"requirements"`
-		IndexURL      string   `json:"index_url"`
-		ExtraIndexURL string   `json:"extra_index_url"`
-		Upgrade       bool     `json:"upgrade"`
-		User          bool     `json:"user"`
+		Package        string `json:"package"`
+		Version        string `json:"version"`
+		Requirements   string `json:"requirements"`
+		IndexURL       string `json:"index_url"`
+		ExtraIndexURL  string `json:"extra_index_url"`
+		Upgrade        bool   `json:"upgrade"`
+		User           bool   `json:"user"`
 		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
@@ -3786,13 +3793,13 @@ func (r *Registry) pipInstall(ctx context.Context, raw json.RawMessage) (Result,
 
 func (r *Registry) pip3Install(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Package       string   `json:"package"`
-		Version       string   `json:"version"`
-		Requirements  string   `json:"requirements"`
-		IndexURL      string   `json:"index_url"`
-		ExtraIndexURL string   `json:"extra_index_url"`
-		Upgrade       bool     `json:"upgrade"`
-		User          bool     `json:"user"`
+		Package        string `json:"package"`
+		Version        string `json:"version"`
+		Requirements   string `json:"requirements"`
+		IndexURL       string `json:"index_url"`
+		ExtraIndexURL  string `json:"extra_index_url"`
+		Upgrade        bool   `json:"upgrade"`
+		User           bool   `json:"user"`
 		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
@@ -3854,9 +3861,9 @@ func (r *Registry) pip3Install(ctx context.Context, raw json.RawMessage) (Result
 
 func (r *Registry) condaInstall(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Package       string   `json:"package"`
-		Channel       string   `json:"channel"`
-		Version       string   `json:"version"`
+		Package        string `json:"package"`
+		Channel        string `json:"channel"`
+		Version        string `json:"version"`
 		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
@@ -3899,11 +3906,11 @@ func (r *Registry) condaInstall(ctx context.Context, raw json.RawMessage) (Resul
 
 func (r *Registry) condaCreate(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Name         string   `json:"name"`
-		Python       string   `json:"python"`
-		Packages     []string `json:"packages"`
-		Channel      string   `json:"channel"`
-		TimeoutSeconds int   `json:"timeout_seconds"`
+		Name           string   `json:"name"`
+		Python         string   `json:"python"`
+		Packages       []string `json:"packages"`
+		Channel        string   `json:"channel"`
+		TimeoutSeconds int      `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -3945,11 +3952,11 @@ func (r *Registry) condaCreate(ctx context.Context, raw json.RawMessage) (Result
 
 func (r *Registry) wingetInstall(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Package       string `json:"package"`
-		Version       string `json:"version"`
-		Scope         string `json:"scope"`
-		Source        string `json:"source"`
-		TimeoutSeconds int  `json:"timeout_seconds"`
+		Package        string `json:"package"`
+		Version        string `json:"version"`
+		Scope          string `json:"scope"`
+		Source         string `json:"source"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -3992,11 +3999,11 @@ func (r *Registry) wingetInstall(ctx context.Context, raw json.RawMessage) (Resu
 
 func (r *Registry) chocoInstall(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Package       string `json:"package"`
-		Version       string `json:"version"`
-		Source        string `json:"source"`
-		Force         bool   `json:"force"`
-		TimeoutSeconds int  `json:"timeout_seconds"`
+		Package        string `json:"package"`
+		Version        string `json:"version"`
+		Source         string `json:"source"`
+		Force          bool   `json:"force"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -4039,9 +4046,9 @@ func (r *Registry) chocoInstall(ctx context.Context, raw json.RawMessage) (Resul
 
 func (r *Registry) aptInstall(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Package       string `json:"package"`
-		Update        bool   `json:"update"`
-		TimeoutSeconds int  `json:"timeout_seconds"`
+		Package        string `json:"package"`
+		Update         bool   `json:"update"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -4078,9 +4085,9 @@ func (r *Registry) aptInstall(ctx context.Context, raw json.RawMessage) (Result,
 
 func (r *Registry) aptGetInstall(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Package       string `json:"package"`
-		Update        bool   `json:"update"`
-		TimeoutSeconds int  `json:"timeout_seconds"`
+		Package        string `json:"package"`
+		Update         bool   `json:"update"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -4117,10 +4124,10 @@ func (r *Registry) aptGetInstall(ctx context.Context, raw json.RawMessage) (Resu
 
 func (r *Registry) snapInstall(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Package       string `json:"package"`
-		Classic       bool   `json:"classic"`
-		Channel       string `json:"channel"`
-		TimeoutSeconds int  `json:"timeout_seconds"`
+		Package        string `json:"package"`
+		Classic        bool   `json:"classic"`
+		Channel        string `json:"channel"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -4160,9 +4167,9 @@ func (r *Registry) snapInstall(ctx context.Context, raw json.RawMessage) (Result
 
 func (r *Registry) dnfInstall(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Package       string `json:"package"`
-		Refresh       bool   `json:"refresh"`
-		TimeoutSeconds int  `json:"timeout_seconds"`
+		Package        string `json:"package"`
+		Refresh        bool   `json:"refresh"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -4199,10 +4206,10 @@ func (r *Registry) dnfInstall(ctx context.Context, raw json.RawMessage) (Result,
 
 func (r *Registry) brewInstall(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Package       string `json:"package"`
-		Cask          bool   `json:"cask"`
-		Tap           string `json:"tap"`
-		TimeoutSeconds int  `json:"timeout_seconds"`
+		Package        string `json:"package"`
+		Cask           bool   `json:"cask"`
+		Tap            string `json:"tap"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -4244,13 +4251,13 @@ func (r *Registry) brewInstall(ctx context.Context, raw json.RawMessage) (Result
 
 func (r *Registry) curlFetch(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		URL       string            `json:"url"`
-		Method    string            `json:"method"`
-		Headers   map[string]string `json:"headers"`
-		Data      string            `json:"data"`
-		Output    string            `json:"output"`
-		Location  bool              `json:"location"`
-		MaxTime   int               `json:"max_time"`
+		URL      string            `json:"url"`
+		Method   string            `json:"method"`
+		Headers  map[string]string `json:"headers"`
+		Data     string            `json:"data"`
+		Output   string            `json:"output"`
+		Location bool              `json:"location"`
+		MaxTime  int               `json:"max_time"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -4316,14 +4323,14 @@ func (r *Registry) curlFetch(ctx context.Context, raw json.RawMessage) (Result, 
 
 func (r *Registry) wgetFetch(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		URL               string `json:"url"`
-		Output            string `json:"output"`
-		Recursive         bool   `json:"recursive"`
-		PageRequisites    bool   `json:"page_requisites"`
-		MaxDepth          int    `json:"max_depth"`
-		Reject           string `json:"reject"`
+		URL                string `json:"url"`
+		Output             string `json:"output"`
+		Recursive          bool   `json:"recursive"`
+		PageRequisites     bool   `json:"page_requisites"`
+		MaxDepth           int    `json:"max_depth"`
+		Reject             string `json:"reject"`
 		ExcludeDirectories string `json:"exclude_directories"`
-		Continue         bool   `json:"continue"`
+		Continue           bool   `json:"continue"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -4714,11 +4721,11 @@ func (r *Registry) base64Encode(ctx context.Context, raw json.RawMessage) (Resul
 
 func (r *Registry) nodeRun(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Script       string   `json:"script"`
-		Eval         string   `json:"eval"`
-		Args         []string `json:"args"`
-		VMArgs       []string `json:"vm_args"`
-		TimeoutSeconds int   `json:"timeout_seconds"`
+		Script         string   `json:"script"`
+		Eval           string   `json:"eval"`
+		Args           []string `json:"args"`
+		VMArgs         []string `json:"vm_args"`
+		TimeoutSeconds int      `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -4769,10 +4776,10 @@ func (r *Registry) nodeRun(ctx context.Context, raw json.RawMessage) (Result, er
 
 func (r *Registry) npmCommand(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Command       string   `json:"command"`
-		Script        string   `json:"script"`
-		Args          []string `json:"args"`
-		TimeoutSeconds int    `json:"timeout_seconds"`
+		Command        string   `json:"command"`
+		Script         string   `json:"script"`
+		Args           []string `json:"args"`
+		TimeoutSeconds int      `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -4816,9 +4823,9 @@ func (r *Registry) npmCommand(ctx context.Context, raw json.RawMessage) (Result,
 
 func (r *Registry) npxCommand(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Package       string   `json:"package"`
-		Args          []string `json:"args"`
-		TimeoutSeconds int    `json:"timeout_seconds"`
+		Package        string   `json:"package"`
+		Args           []string `json:"args"`
+		TimeoutSeconds int      `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -4901,11 +4908,11 @@ func (r *Registry) nvmUse(ctx context.Context, raw json.RawMessage) (Result, err
 
 func (r *Registry) dotnetRun(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Project     string   `json:"project"`
-		Args        []string `json:"args"`
-		Config      string   `json:"configuration"`
-		Framework   string   `json:"framework"`
-		TimeoutSeconds int  `json:"timeout_seconds"`
+		Project        string   `json:"project"`
+		Args           []string `json:"args"`
+		Config         string   `json:"configuration"`
+		Framework      string   `json:"framework"`
+		TimeoutSeconds int      `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -4954,12 +4961,12 @@ func (r *Registry) dotnetRun(ctx context.Context, raw json.RawMessage) (Result, 
 
 func (r *Registry) dotnetBuild(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Project     string `json:"project"`
-		Config      string `json:"configuration"`
-		Framework   string `json:"framework"`
-		Output      string `json:"output"`
-		NoRestore  bool   `json:"no_restore"`
-		TimeoutSeconds int `json:"timeout_seconds"`
+		Project        string `json:"project"`
+		Config         string `json:"configuration"`
+		Framework      string `json:"framework"`
+		Output         string `json:"output"`
+		NoRestore      bool   `json:"no_restore"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -5017,13 +5024,13 @@ func (r *Registry) dotnetBuild(ctx context.Context, raw json.RawMessage) (Result
 
 func (r *Registry) dotnetTest(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Project     string `json:"project"`
-		Filter      string `json:"filter"`
-		Config      string `json:"configuration"`
-		Framework   string `json:"framework"`
-		NoBuild    bool   `json:"no_build"`
-		Logger     string `json:"logger"`
-		TimeoutSeconds int `json:"timeout_seconds"`
+		Project        string `json:"project"`
+		Filter         string `json:"filter"`
+		Config         string `json:"configuration"`
+		Framework      string `json:"framework"`
+		NoBuild        bool   `json:"no_build"`
+		Logger         string `json:"logger"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -5077,12 +5084,12 @@ func (r *Registry) dotnetTest(ctx context.Context, raw json.RawMessage) (Result,
 
 func (r *Registry) msbuild(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Project       string                 `json:"project"`
-		Target        string                 `json:"target"`
-		Config        string                 `json:"configuration"`
-		Property      map[string]string      `json:"property"`
-		MaxCPUCount   int                    `json:"max_cpu_count"`
-		TimeoutSeconds int                   `json:"timeout_seconds"`
+		Project        string            `json:"project"`
+		Target         string            `json:"target"`
+		Config         string            `json:"configuration"`
+		Property       map[string]string `json:"property"`
+		MaxCPUCount    int               `json:"max_cpu_count"`
+		TimeoutSeconds int               `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -5131,12 +5138,12 @@ func (r *Registry) msbuild(ctx context.Context, raw json.RawMessage) (Result, er
 
 func (r *Registry) nugetRestore(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Project    string   `json:"project"`
-		Packages   string   `json:"packages"`
-		Source     []string `json:"source"`
-		ConfigFile string   `json:"config_file"`
-		Force      bool     `json:"force"`
-		TimeoutSeconds int `json:"timeout_seconds"`
+		Project        string   `json:"project"`
+		Packages       string   `json:"packages"`
+		Source         []string `json:"source"`
+		ConfigFile     string   `json:"config_file"`
+		Force          bool     `json:"force"`
+		TimeoutSeconds int      `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -5194,13 +5201,13 @@ func (r *Registry) nugetRestore(ctx context.Context, raw json.RawMessage) (Resul
 
 func (r *Registry) nugetInstall(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var args struct {
-		Package     string   `json:"package"`
-		Version     string   `json:"version"`
-		OutputDir   string   `json:"output_dir"`
-		Source      []string `json:"source"`
-		ConfigFile  string   `json:"config_file"`
-		Prerelease  bool     `json:"prerelease"`
-		TimeoutSeconds int `json:"timeout_seconds"`
+		Package        string   `json:"package"`
+		Version        string   `json:"version"`
+		OutputDir      string   `json:"output_dir"`
+		Source         []string `json:"source"`
+		ConfigFile     string   `json:"config_file"`
+		Prerelease     bool     `json:"prerelease"`
+		TimeoutSeconds int      `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err

@@ -1,105 +1,115 @@
 # Developer Guide
 
-This document defines the implementation architecture for Qodex.
+This document is the current architecture reference for Qodex.
 
-## Product Shape
+## Overview
 
-Qodex is a local coding agent that runs in a terminal. It should feel like a serious developer tool: fast startup, stable keyboard behavior, clear diffs, explicit approvals, and predictable project-local behavior.
+Qodex is a local-first coding agent written in Go. It provides:
 
-The MVP optimizes for one local model served through `llama.cpp` using an OpenAI-compatible HTTP API. vLLM and SGLang are supported as optional endpoint-compatible backends.
+- Cobra-based CLI commands
+- a Bubble Tea terminal chat UI
+- a multi-step agent loop with tool execution
+- SQLite-backed session and tool-event persistence
+- local/project skill discovery
+- an OpenAI-compatible model client aimed at local backends
 
-## Technology Choices
+The default runtime is `llama.cpp`. `vLLM` and `SGLang` are supported through the same OpenAI-compatible interface.
 
-### Language
+## Command Surface
 
-Use Go.
-
-Reasons:
-
-- Good terminal app performance.
-- Simple static binary distribution.
-- Strong process, filesystem, and concurrency primitives.
-- Mature TUI ecosystem through Charm libraries.
-- Easier operational packaging than Python for an end-user CLI.
-
-### CLI
-
-Use `spf13/cobra`.
-
-Full command tree:
+The current top-level command set is:
 
 ```text
-qodex
-qodex setup              Interactive first-time setup wizard
-qodex init               Create project-local config and starter skill
-qodex chat               Start the terminal chat UI
-qodex run PROMPT         Run a one-shot agent prompt
-qodex review             Review uncommitted changes
-qodex config list        List effective configuration
-qodex config get KEY     Show one configuration value
-qodex config set KEY VAL Set a project-local configuration value
-qodex doctor             Check configuration and local model connectivity
-qodex skills list        List discovered skills
-qodex skills show NAME   Show a skill
-qodex sessions list      List recent sessions
-qodex sessions resume ID Resume a session in the TUI
-qodex sessions export ID Export session data as JSON
-qodex version            Print version and build metadata
-qodex completion SHELL   Generate shell completion scripts
+qodex setup
+qodex init
+qodex config list|get|set
+qodex run PROMPT [--session ID]
+qodex chat
+qodex review
+qodex doctor
+qodex serve start|stop|status
+qodex models list|download
+qodex skills list|show
+qodex sessions list|resume|export
+qodex reset
+qodex version
+qodex completion
 ```
 
-### Terminal UI
-
-Use:
-
-- `github.com/charmbracelet/bubbletea`
-- `github.com/charmbracelet/bubbles`
-- `github.com/charmbracelet/lipgloss`
-- `github.com/charmbracelet/glamour` for Markdown rendering
-
-Primary TUI regions:
+## Repository Layout
 
 ```text
-┌─────────────────────────────────────────────┐
-│ Session header: project, model, backend      │
-├─────────────────────────────────────────────┤
-│ Conversation and tool timeline               │
-│ - assistant messages                         │
-│ - tool calls                                 │
-│ - command output                             │
-│ - file diffs                                 │
-├─────────────────────────────────────────────┤
-│ Approval / status / diagnostics panel        │
-├─────────────────────────────────────────────┤
-│ Prompt input                                 │
-└─────────────────────────────────────────────┘
+cmd/qodex/       CLI wiring and command entrypoints
+internal/agent/  agent loop, approvals, context compaction, events
+internal/config/ layered config loading, defaults, validation
+internal/lsp/    JSON-RPC LSP client over stdio
+internal/model/  OpenAI-compatible HTTP client and backend manager
+internal/skills/ built-in + local skill discovery and routing
+internal/store/  SQLite persistence and migrations
+internal/tools/  tool registry, executors, diff preview, project index
+internal/tui/    Bubble Tea UI
+docs/            user, developer, release, and security guides
+examples/        example backend configs
 ```
 
-The TUI is a thin presentation layer over the agent engine. Agent state, storage, model calls, and tool execution are independent of Bubble Tea.
+## Runtime Flow
 
-### Storage
+At runtime, the stack is:
 
-Use SQLite via `modernc.org/sqlite` (pure Go, no CGO).
-
-Key tables:
-
-```sql
-sessions(id, project_root, title, created_at, updated_at, model, backend)
-messages(id, session_id, role, content, created_at)
-tool_calls(id, session_id, message_id, name, arguments_json, status, created_at)
-tool_results(id, tool_call_id, output, error, created_at)
-approvals(id, tool_call_id, decision, policy, created_at)
-output_artifacts(id, session_id, tool_call_id, tool_name, summary, content, content_type, created_at)
-schema_version(version, applied_at)
+```text
+CLI/TUI
+  -> config.Load
+  -> store.Open
+  -> skills.Discover
+  -> tools.NewRegistry
+  -> model.NewClient
+  -> agent.Run
 ```
 
-The database is treated as an event log first. Derived indexes can come later.
+The TUI adds:
 
-## Model Runtime
+```text
+Bubble Tea model
+  -> streamed token rendering
+  -> tool timeline
+  -> approval prompts
+  -> resume history rendering
+  -> @file autocomplete
+```
 
-### Primary Backend: llama.cpp
+## Agent Loop
 
-Default configuration:
+The agent loop in `internal/agent` is explicit:
+
+1. Load or create a session.
+2. Select relevant skills.
+3. Build the system prompt from current task, prior state, tools, and skills.
+4. Call the model in either:
+   - prompt mode: the model emits one JSON tool call in text
+   - native mode: the client sends OpenAI-compatible `tools`
+5. Validate the requested tool.
+6. Apply approval policy based on tool effect.
+7. Execute the tool and persist the result.
+8. Feed the result back into the conversation.
+9. Stop when the model returns final text or `max_steps` is reached.
+
+The agent also:
+
+- tracks current task, files inspected, and actions taken
+- emits UI events for tool requests, approvals, failures, and completions
+- compacts conversation history when approaching the configured context budget
+- stores large tool outputs as artifacts in SQLite
+
+## Configuration Model
+
+Config is layered from:
+
+1. built-in defaults
+2. `~/.config/qodex/config.toml`
+3. `.qodex/config.toml`
+4. an explicit `--config` path, if provided
+
+Key sections are:
 
 ```toml
 [model]
@@ -112,112 +122,113 @@ backend = "llama.cpp"
 context_tokens = 32768
 temperature = 0.2
 top_p = 0.95
+
+[approval]
+auto_approve = false
+write_files = "ask"
+run_commands = "ask"
+network = "ask"
+
+[store]
+path = ".qodex/qodex.db"
+
+[agent]
+max_steps = 12
+skill_routing = "auto"
+tool_calls = "prompt"
 ```
 
-See [llama.cpp Setup Guide](llama-cpp-setup.md) for recommended model tiers and server flags.
+## Persistence
 
-### Advanced Backends
+SQLite is used as an event log and session store. The current schema includes:
 
-vLLM and SGLang are supported as endpoint-compatible alternatives. See the example configs in `examples/`.
-
-The agent does not care whether the backend is `llama.cpp`, vLLM, or SGLang after configuration is loaded. It depends only on:
-
-- Chat completion request.
-- Streaming tokens.
-- Structured tool-call response format, either prompt-based or native `tools`/`tool_calls`.
-- Model name.
-- Context window settings.
-
-### Capability Detection
-
-At startup (TUI mode), the client pings the backend with a streaming probe (`POST /chat/completions` with `stream=true`) to detect whether SSE streaming is supported. The result controls whether the TUI renders tokens incrementally.
-
-## Package Layout
-
-```text
-cmd/qodex/              Cobra entrypoint
-internal/agent/         Agent loop and orchestration
-internal/config/        Config loading, validation, defaults
-internal/lsp/           JSON-RPC 2.0 LSP client over stdio
-internal/model/         OpenAI-compatible HTTP client + types
-internal/skills/        Skill discovery, selection, context slicing
-internal/store/         SQLite persistence and migrations
-internal/tools/         Tool registry and all built-in tools
-internal/tui/           Bubble Tea models and views
+```sql
+sessions(id, project_root, title, model, backend, created_at, updated_at)
+messages(id, session_id, role, content, created_at)
+tool_calls(id, session_id, name, arguments_json, status, created_at)
+tool_results(id, tool_call_id, output, error, created_at)
+approvals(id, session_id, tool_call_id, tool_name, kind, summary, approved, created_at)
+output_artifacts(id, session_id, tool_call_id, tool_name, summary, content, content_type, size, created_at)
+schema_version(version, applied_at)
 ```
 
-`internal/agent` is free of TUI imports.
+## Tools
 
-## Agent Loop
+`internal/tools.NewRegistry` is the single source of truth for built-in tools. Tools are registered with:
 
-The agent loop is explicit and auditable:
+- name
+- description
+- effect
+- JSON schema
+- executor function
 
-```text
-1. Receive user prompt.
-2. Load project instructions and enabled skills.
-3. Build model context (system prompt + conversation history).
-4. Select tool-calling mode:
-   a. Prompt mode (default): instruct model via system prompt to emit JSON tool calls.
-   b. Native mode (opt-in, agent.tool_calls = "native"): send OpenAI tools/tool_calls.
-5. Call local model endpoint (streaming or non-streaming).
-6. Parse assistant response:
-   a. If native mode: extract tool_calls from structured response.
-   b. If prompt mode: extract tool_call JSON from text response.
-7. If response contains tool call(s):
-   a. Validate tool name and arguments.
-   b. Evaluate approval policy (read → auto, write/shell → ask).
-   c. Execute tool.
-   d. Persist call and result.
-   e. Append tool result to context.
-   f. Continue loop (up to max_steps).
-8. If response is final text:
-   a. Persist message.
-   b. Return to TUI or CLI caller.
+Important tool groups:
+
+- file inspection and edits
+- git status/diff/log/review
+- test and formatter helpers
+- project index and LSP navigation
+- language/runtime tools for Go, Node, Python, .NET, Java, Flutter, and Dart
+- package and archive helpers
+- Docker, QEMU, and ADB helpers
+
+Every tool must be registered in the registry to be reachable by the agent. If you add a tool implementation without registration, it will not appear in `ToolSchemas()` or the prompt tool list.
+
+## Skills
+
+Skills are discovered from:
+
+- built-in embedded skills
+- `~/.config/qodex/skills`
+- `.qodex/skills`
+
+Project-local skills override user skills with the same name. A skill can include:
+
+- `SKILL.md`
+- optional `skill.toml`
+- optional pre-approved scripts
+
+`skill.toml` controls:
+
+- triggers
+- allowed tools
+- context budget
+- predefined scripts
+
+The agent can select skills via keyword heuristics or model-assisted routing, depending on `agent.skill_routing`.
+
+## Backend Notes
+
+Backend management lives under `internal/model`.
+
+- Linux and macOS support managed `llama.cpp` installation.
+- Native Windows currently does not support automatic `llama.cpp` setup.
+- `vLLM` and `SGLang` installation relies on local Python and `pip`.
+
+The model client itself only depends on an OpenAI-compatible API, so external endpoints remain supported.
+
+## Testing
+
+The repo has package-level Go tests across the main subsystems:
+
+- agent loop behavior
+- config parsing and validation
+- model client behavior
+- skill discovery and routing
+- store/migrations
+- tool registration and tool behavior
+- TUI update logic
+- LSP client flows
+
+Run the suite with:
+
+```sh
+go test ./...
 ```
 
-Hard limits:
+## Documentation Maintenance
 
-- Max tool calls per user turn (`agent.max_steps`, default 12).
-- Max shell command runtime (120s default, max 300s).
-- Max output bytes per tool (20000 characters, with artifact fallback for larger output).
-- Max modified files per turn unless approved.
-
-## Built-In Tools
-
-16 tools registered in `internal/tools/tools.go`:
-
-| Tool | Effect | Description |
-|---|---|---|
-| `list_files` | read | List files under project root |
-| `read_file` | read | Read a UTF-8 text file with optional line range |
-| `search_text` | read | Text search in project files |
-| `write_file` | write | Write a complete file |
-| `write_patch` | write | Apply a unified diff via `git apply` |
-| `run_command` | shell | Run a command in project root |
-| `run_script` | shell | Run a pre-approved skill script |
-| `run_tests` | shell | Discover and run tests (go/pytest/jest) |
-| `run_formatter` | shell | Run a code formatter (go/ruff/black/prettier) |
-| `git_status` | read | Show git status |
-| `git_diff` | read | Show git diff |
-| `review_changes` | read | Analyze uncommitted git changes |
-| `project_index` | read | Query file/symbol index or get project summary |
-| `lsp_diagnostics` | read | Run LSP to get diagnostics for a file |
-| `lsp_definition` | read | Go to definition via LSP |
-| `lsp_find_references` | read | Find references via LSP |
-
-`write_file` is useful for small complete-file writes. `write_patch` (unified diff) is preferred for edits to existing files because it preserves surrounding content and is easier to review.
-
-Tool implementations return structured `Result` objects with summary, content, and optional metadata. Large outputs (>64KB) are stored as artifacts and replaced with a summary reference in the context.
-
-## Tool Calling Modes
-
-### Prompt Mode (default)
-
-The system prompt instructs the model to emit a JSON object when it wants a tool:
-
-```json
-{"tool_call":{"name":"read_file","arguments":{"path":"README.md"}}}
-```
+When behavior changes, update the user guide and any architecture/security docs in the same change. The docs in `docs/` should describe the current implementation, not proposed future plans.
 
 The agent parses the response with `parseToolCallDetailed`, which handles markdown fences and embedded JSON. Validation errors are fed back to the model for self-repair.
 

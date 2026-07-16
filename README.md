@@ -2,7 +2,7 @@
 
 Qodex is a local-first coding agent CLI written in Go. It uses a terminal UI with streaming token rendering, an OpenAI-compatible local model endpoint, and a single locally hosted Qwen Coder model by default.
 
-The intended runtime is `llama.cpp`, but Qodex now manages backend installation and model downloads itself during `qodex setup`. Other OpenAI-compatible backends such as vLLM and SGLang can be selected as advanced runtime options without changing the agent core. Backend capability detection is performed at startup to enable streaming when supported.
+The intended runtime is `llama.cpp`, and Qodex manages backend installation and model downloads itself during `qodex setup` on Linux and macOS. On Windows, WSL2 is the recommended path for managed local backends; native Windows can still target a manually managed OpenAI-compatible endpoint. Other backends such as vLLM and SGLang can be selected as advanced runtime options without changing the agent core. Backend capability detection is performed at startup to enable streaming when supported.
 
 ## Current Status
 
@@ -49,6 +49,7 @@ The repository includes a fully featured coding agent with:
 - [Security Model](docs/security-model.md)
 - [Roadmap](docs/roadmap.md)
 - [llama.cpp Setup Guide](docs/llama-cpp-setup.md)
+- [GitHub Release Pipeline Setup](docs/github-release-setup.md)
 - [Release Management](docs/release-management.md)
 - [Example Configs](examples/)
 
@@ -112,8 +113,8 @@ Display:   True-color terminal (WezTerm, Kitty, Alacritty, iTerm2, Windows Termi
 #### Windows
 
 - **OS**: Windows 10 22H2+ or Windows 11.
-- **WSL2**: recommended for best compatibility with llama.cpp prebuilt binaries and Python-based backends.
-- **Native**: `qodex` runs natively, but llama.cpp CPU inference works; GPU acceleration requires CUDA-capable setup.
+- **WSL2**: recommended for managed llama.cpp installs and best compatibility with Python-based backends.
+- **Native**: `qodex` runs natively, but automatic llama.cpp setup is not available yet. Use a manually managed OpenAI-compatible endpoint if you stay outside WSL2.
 - **Terminal**: Windows Terminal with a Nerd Font for the best TUI experience.
 
 ### Memory Sizing By Model
@@ -148,7 +149,7 @@ See the [User Guide](docs/user-guide.md) for per-platform notes on terminal setu
 ## Build
 
 ```sh
-go build -ldflags="-X main.version=0.1.0 -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" ./cmd/qodex
+go build -ldflags="-X main.version=$(git describe --tags --dirty --always --match 'v*' | sed 's/^v//') -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" ./cmd/qodex
 ```
 
 This creates a local `./qodex` binary with version metadata.
@@ -165,7 +166,7 @@ To verify the build:
 make build-all
 ```
 
-Produces binaries for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, and windows/amd64 in `build/`.
+Produces binaries for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, and windows/arm64 in `build/`.
 
 ## Install
 
@@ -181,11 +182,26 @@ make install
 curl -fsSL https://github.com/benoybose/qodex/raw/main/scripts/install.sh | sh
 ```
 
+### Windows PowerShell install
+
+```powershell
+irm https://github.com/benoybose/qodex/raw/main/scripts/install.ps1 | iex
+```
+
 ### Homebrew
 
 ```sh
 brew install benoybose/qodex/qodex
 ```
+
+## Release Automation
+
+Releases use Release Please plus GoReleaser:
+
+- conventional commits merged to `main` update a release PR and `CHANGELOG.md`
+- merging the release PR with `RELEASE_PLEASE_TOKEN` configured creates the next semantic `v*` tag
+- tag pushes publish signed GitHub Release artifacts for Linux, macOS, and Windows
+- Linux releases also publish `.deb`, `.rpm`, and `.apk` packages
 
 ## Runtime Shape
 
@@ -245,9 +261,10 @@ The CLI should treat this as an OpenAI-compatible base URL and should not requir
 Run `qodex` without arguments for the first time to trigger the interactive setup wizard, which will:
 1. Choose a backend (llama.cpp, vLLM, or SGLang)
 2. Install the backend automatically
-3. Select and download a model
-4. Start the model server
-5. Create project configuration
+3. Select a model from the known list or enter one manually
+4. Download the model with `qodex models download <model-name>` or place it in the models directory if it is not already present
+5. Start the model server
+6. Create project configuration
 
 For prompts that may write files or run commands:
 

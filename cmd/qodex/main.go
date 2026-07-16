@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -31,7 +32,7 @@ var debugLog io.Writer
 
 // Set via ldflags at build time:
 //
-//	go build -ldflags="-X main.version=0.1.0 -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" ./cmd/qodex
+//	go build -ldflags="-X main.version=$(git describe --tags --dirty --always --match 'v*' | sed 's/^v//') -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" ./cmd/qodex
 var (
 	version = "dev"
 	commit  = "none"
@@ -107,6 +108,9 @@ No configuration found? Run 'qodex setup' for an interactive setup wizard.`,
 	cmd.AddCommand(versionCmd())
 	cmd.AddCommand(completionCmd())
 	cmd.AddCommand(serveCmd())
+	cmd.AddCommand(upCmd())
+	cmd.AddCommand(downCmd())
+	cmd.AddCommand(statusCmd())
 	cmd.AddCommand(modelsCmd())
 	return cmd
 }
@@ -137,7 +141,7 @@ Installation:
   PowerShell:
     qodex completion powershell | Out-String | Invoke-Expression
 `,
-		Args: cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
+		Args:      cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
 		ValidArgs: []string{"bash", "zsh", "fish", "powershell"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root := cmd.Root()
@@ -400,6 +404,46 @@ func doctorCmd(cfgPath *string) *cobra.Command {
 			fmt.Printf("Model endpoint: %s\n", cfg.Model.BaseURL)
 			fmt.Printf("Model name: %s\n", cfg.Model.Model)
 			fmt.Printf("Runtime backend: %s\n", cfg.Runtime.Backend)
+			if cfg.Runtime.Backend == string(model.BackendExternal) {
+				fmt.Println("Managed backend: external endpoint mode")
+				client := model.NewClient(cfg.Model.BaseURL, cfg.Model.Model)
+				ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+				defer cancel()
+				if err := client.Check(ctx); err != nil {
+					return fmt.Errorf("model endpoint check failed: %w", err)
+				}
+				fmt.Println("Model endpoint: ok")
+				return nil
+			}
+
+			installRoot := getInstallRoot()
+			mgr := model.NewManager(model.Backend(cfg.Runtime.Backend), installRoot, cfg.Model.Model, 0)
+			if state, err := mgr.LoadState(); err == nil && state.Port > 0 {
+				mgr = model.NewManager(model.Backend(cfg.Runtime.Backend), installRoot, cfg.Model.Model, state.Port)
+			}
+			diag := mgr.Diagnostics(cmd.Context())
+			fmt.Printf("Install root: %s\n", diag.InstallRoot)
+			if diag.BackendInstalled {
+				fmt.Printf("Backend install: ok")
+				if diag.BinaryPath != "" {
+					fmt.Printf(" (%s)", diag.BinaryPath)
+				}
+				fmt.Println()
+			} else {
+				fmt.Println("Backend install: missing")
+			}
+			if diag.ModelPresent {
+				fmt.Printf("Managed model file: %s\n", diag.ModelPath)
+			} else {
+				fmt.Printf("Managed model file: missing (searched under %s)\n", filepath.Join(diag.InstallRoot, "models"))
+			}
+			if diag.Server.Running {
+				fmt.Printf("Managed server: running (pid=%d port=%d)\n", diag.Server.PID, diag.Server.Port)
+			} else if diag.Server.Error != "" {
+				fmt.Printf("Managed server: not running (%s)\n", diag.Server.Error)
+			} else {
+				fmt.Println("Managed server: not running")
+			}
 
 			client := model.NewClient(cfg.Model.BaseURL, cfg.Model.Model)
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
@@ -627,6 +671,7 @@ func buildRuntime(cfgPath string, yes bool, tuiMode bool, sessionID int64) (*run
 	if err != nil {
 		return nil, err
 	}
+	cfg = maybeUseManagedRuntime(cfg)
 	db, err := store.Open(cfg.Store.Path)
 	if err != nil {
 		return nil, err
@@ -650,6 +695,11 @@ func buildRuntime(cfgPath string, yes bool, tuiMode bool, sessionID int64) (*run
 		line = strings.TrimSpace(strings.ToLower(line))
 		return line == "y" || line == "yes"
 	})
+
+	if err := maybeEnsureManagedBackend(&cfg); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 
 	client := model.NewClient(cfg.Model.BaseURL, cfg.Model.Model)
 	if debugLog != nil {
@@ -682,4 +732,66 @@ func buildRuntime(cfgPath string, yes bool, tuiMode bool, sessionID int64) (*run
 		}()
 	}
 	return &runtime{Agent: agt, Store: db, AutoApprove: yes || cfg.Approval.AutoApprove}, nil
+}
+
+func maybeUseManagedRuntime(cfg config.Config) config.Config {
+	if cfg.Runtime.Backend == string(model.BackendExternal) {
+		return cfg
+	}
+	if !isLocalEndpoint(cfg.Model.BaseURL) {
+		return cfg
+	}
+	installRoot := getInstallRoot()
+	mgr := model.NewManager(model.Backend(cfg.Runtime.Backend), installRoot, cfg.Model.Model, 0)
+	if state, err := mgr.LoadState(); err == nil && state.Endpoint != "" {
+		cfg.Model.BaseURL = state.Endpoint
+		if state.Model != "" {
+			cfg.Model.Model = state.Model
+		}
+	}
+	return cfg
+}
+
+func maybeEnsureManagedBackend(cfg *config.Config) error {
+	if cfg.Runtime.Backend == string(model.BackendExternal) {
+		return nil
+	}
+	if !isLocalEndpoint(cfg.Model.BaseURL) {
+		return nil
+	}
+	client := model.NewClient(cfg.Model.BaseURL, cfg.Model.Model)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Check(ctx); err == nil {
+		return nil
+	}
+
+	installRoot := getInstallRoot()
+	mgr := model.NewManager(model.Backend(cfg.Runtime.Backend), installRoot, cfg.Model.Model, 0)
+	if state, err := mgr.LoadState(); err == nil && state.Port > 0 {
+		mgr = model.NewManager(model.Backend(cfg.Runtime.Backend), installRoot, cfg.Model.Model, state.Port)
+	}
+	diag := mgr.Diagnostics(ctx)
+	if !diag.BackendInstalled && !diag.ModelPresent {
+		return nil
+	}
+	if err := mgr.EnsureRunning(context.Background()); err != nil {
+		return err
+	}
+	if state, err := mgr.LoadState(); err == nil && state.Endpoint != "" {
+		cfg.Model.BaseURL = state.Endpoint
+		if state.Model != "" {
+			cfg.Model.Model = state.Model
+		}
+	}
+	return nil
+}
+
+func isLocalEndpoint(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "127.0.0.1" || host == "localhost"
 }

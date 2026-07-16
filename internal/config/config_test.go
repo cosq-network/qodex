@@ -148,6 +148,14 @@ func TestValidateRejectsInvalidSkillRouting(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsExternalBackend(t *testing.T) {
+	cfg := Defaults("/test")
+	cfg.Runtime.Backend = "external"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected no error for external backend, got %v", err)
+	}
+}
+
 func TestValuesIncludeSkillRouting(t *testing.T) {
 	cfg := Defaults("/test")
 	vals := cfg.Values()

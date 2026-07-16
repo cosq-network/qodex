@@ -1,55 +1,50 @@
 # Tool Calling And Skills
 
-This document defines Qodex's local tool-calling and skills design.
+This document describes how Qodex exposes tools to the model and how skills shape agent behavior.
 
-## Design Principle
+## Design Goal
 
-The model is never trusted to perform actions directly. It may request a tool call. Qodex validates the request, applies policy, executes the tool, stores the result, and gives the result back to the model.
+The model is not allowed to act directly on the filesystem or shell. It can only request tools. Qodex then:
 
-This makes the agent loop deterministic around filesystem and shell effects even when model output is imperfect.
+1. validates the request
+2. applies approval policy
+3. executes the tool
+4. stores the result
+5. feeds the result back into the conversation
 
-## Tool Call Format
+That separation is the core control boundary for the agent.
 
-Prefer native OpenAI-compatible tool calls later when the backend supports them reliably. The current MVP uses a strict prompted JSON block because it works across `llama.cpp` builds and Qwen Coder variants.
+## Tool Calling Modes
 
-Canonical internal representation:
+Qodex supports two modes.
 
-```json
-{
-  "id": "call_01",
-  "name": "read_file",
-  "arguments": {
-    "path": "README.md"
-  }
-}
-```
+### Prompt Mode
 
-The internal representation should be the same no matter how the model produced the request.
-
-## Tool Definition Format
-
-Each tool should have:
+This is the default. The model is instructed to emit exactly one JSON object when it wants a tool:
 
 ```json
-{
-  "name": "read_file",
-  "description": "Read a UTF-8 text file from the current project.",
-  "input_schema": {
-    "type": "object",
-    "properties": {
-      "path": {
-        "type": "string"
-      }
-    },
-    "required": ["path"],
-    "additionalProperties": false
-  },
-  "effect": "read",
-  "approval": "auto"
-}
+{"tool_call":{"name":"read_file","arguments":{"path":"README.md"}}}
 ```
 
-Recommended effect values:
+Qodex parses that JSON from the assistant text response and validates it before execution.
+
+### Native Mode
+
+If `agent.tool_calls = "native"`, Qodex sends OpenAI-compatible tool schemas and reads structured `tool_calls` back from the model response.
+
+This mode is useful when the backend/model pair reliably supports native tool calling.
+
+## Tool Definition Model
+
+Each tool in the registry has:
+
+- a stable name
+- a human-readable description
+- an effect classification
+- a JSON schema for arguments
+- an executor
+
+The effect classification is one of:
 
 ```text
 read
@@ -59,113 +54,62 @@ network
 destructive
 ```
 
-The effect controls default approval behavior.
+The effect drives default approval handling.
 
-## Tool Result Format
+## Tool Results
 
-Tool results should be structured:
+Tools return structured JSON with the shape:
 
 ```json
 {
-  "tool_call_id": "call_01",
   "ok": true,
-  "summary": "Read README.md, 42 lines.",
-  "content": "file content or summarized output",
+  "summary": "Read README.md",
+  "content": "file contents or summarized output",
   "metadata": {
-    "path": "README.md",
-    "bytes": 1800,
-    "truncated": false
+    "path": "README.md"
   }
 }
 ```
 
-For large outputs, truncate `content` and persist the raw output in SQLite or a project-local cache. The model should receive enough detail to continue, not unbounded logs.
+If output is large, Qodex stores it as an artifact in SQLite and replaces the raw content with a short reference in the model-visible result.
 
-## Built-In Tools
+## Built-In Tool Groups
 
-### `list_files`
+The exact built-in set is defined in `internal/tools.NewRegistry`. Current groups include:
 
-Lists files under the project root.
+- file inspection and edits
+- shell and script execution
+- git inspection and review
+- test and formatter helpers
+- project index and LSP helpers
+- language/runtime helpers for Go, Node, Python, Java, .NET, Flutter, and Dart
+- package-manager, archive, Docker, QEMU, and ADB helpers
 
-Arguments:
+Important higher-level tools currently exposed to the model include:
 
-```json
-{
-  "path": ".",
-  "max_results": 200
-}
-```
+- `run_tests`
+- `run_formatter`
+- `review_changes`
+- `project_index`
+- `lsp_diagnostics`
+- `lsp_definition`
+- `lsp_find_references`
 
-Default approval: auto.
+## Approval Behavior
 
-### `read_file`
+The simplified default policy is:
 
-Reads a text file under the project root.
+- `read`: auto-approve
+- `write`: ask unless explicitly allowed
+- `shell`: ask unless explicitly allowed
+- `network`: ask unless explicitly allowed
+- `destructive`: deny by policy
 
-Arguments:
+Some tools may be reclassified dynamically. For example, `run_command` can be treated as `network` if its arguments look like network activity.
 
-```json
-{
-  "path": "internal/agent/loop.go",
-  "start_line": 1,
-  "end_line": 200
-}
-```
+## Direct Command vs Shell Command
 
-Default approval: auto.
-
-### `search_text`
-
-Searches project files using ripgrep-compatible behavior.
-
-Arguments:
-
-```json
-{
-  "query": "func Run",
-  "path": ".",
-  "case_sensitive": false
-}
-```
-
-Default approval: auto.
-
-### `write_file`
-
-Writes a complete file under the project root.
-
-Arguments:
-
-```json
-{
-  "path": "internal/example.go",
-  "content": "package internal\n"
-}
-```
-
-Default approval: ask.
-
-### `write_patch`
-
-Applies a unified diff under the project root.
-
-Arguments:
-
-```json
-{
-  "patch": "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-old\n+new\n"
-}
-```
-
-Default approval: ask.
-
-The MVP applies patches with `git apply --whitespace=nowarn -` and rejects absolute paths or parent-directory escapes.
-
-### `run_command`
-
-Runs a command in the project root.
-
-Arguments:
+For command execution, prefer direct `argv`:
 
 ```json
 {
@@ -174,70 +118,105 @@ Arguments:
 }
 ```
 
-Default approval: ask.
-
-Prefer `argv` for direct execution without shell interpretation.
-
-Legacy shell execution is still supported:
+Legacy shell-style command execution still exists:
 
 ```json
 {
   "command": "go test ./...",
+  "shell": true,
   "timeout_seconds": 120
 }
 ```
 
-Shell commands are marked in tool metadata and obvious destructive patterns are rejected.
-
-### `git_status`
-
-Returns concise Git status.
-
-Default approval: auto.
-
-### `git_diff`
-
-Returns Git diff, optionally scoped to files.
-
-Default approval: auto.
+Direct `argv` is safer because it avoids shell parsing.
 
 ## Skills
 
-Skills are local instruction bundles. They let users and projects teach Qodex repeatable workflows without changing the binary.
+Skills are local instruction bundles that give Qodex project or workflow-specific guidance without changing the binary.
 
-## Skill Locations
+Qodex loads:
 
-Recommended search order:
+- embedded built-in skills
+- user skills from `~/.config/qodex/skills`
+- project skills from `.qodex/skills`
+
+Project skills override user skills with the same name.
+
+## Skill File Layout
+
+Minimal skill:
 
 ```text
-.qodex/skills/
-~/.config/qodex/skills/
-```
-
-Project skills should override user skills with the same name.
-
-## Skill Directory Format
-
-```text
-.qodex/skills/go-testing/
-  skill.toml
+.qodex/skills/my-skill/
   SKILL.md
-  examples/
-  scripts/
 ```
 
-Only `SKILL.md` is required for a minimal skill. `skill.toml` is recommended for routing metadata.
+Full skill:
+
+```text
+.qodex/skills/my-skill/
+  SKILL.md
+  skill.toml
+```
 
 ## `skill.toml`
+
+Supported metadata fields are:
+
+- `triggers`
+- `allowed_tools`
+- `context_budget`
+- `scripts`
 
 Example:
 
 ```toml
-name = "go-testing"
-description = "Run and debug Go tests using project conventions."
-version = "0.1.0"
+triggers = ["go test", "failing test", "subtest"]
+allowed_tools = ["read_file", "search_text", "run_tests"]
+context_budget = 3000
 
-triggers = [
+[[scripts]]
+description = "run focused go tests"
+command = "go test ./..."
+tool = "run_command"
+```
+
+## Skill Selection
+
+Qodex always prefers keeping the active skill set small.
+
+- the built-in or local `project` skill is included when present
+- additional skills are selected by keyword heuristics
+- model-assisted routing can be enabled with `agent.skill_routing = "model"`
+
+Only relevant sections of large skills are rendered into the model context when section slicing is enabled.
+
+## Pre-Approved Scripts
+
+Skills can define scripts in `skill.toml`. These scripts are surfaced to the model as named, pre-approved actions and can be executed through `run_script`.
+
+This is intentionally narrower than unconstrained shell access:
+
+- the script must come from an active skill
+- the request is matched by description
+- provenance is recorded in the tool result metadata
+
+## Guidance For Adding New Tools Or Skills
+
+When adding a tool:
+
+1. implement the executor
+2. register it in `NewRegistry`
+3. define its JSON schema
+4. assign the correct effect
+5. add registration and behavior tests
+
+When adding a skill:
+
+1. keep `SKILL.md` concise and actionable
+2. use `skill.toml` only for routing, budgeting, and scripts
+3. restrict `allowed_tools` if the workflow should stay narrow
+4. avoid hidden assumptions that depend on one repository layout
   "test",
   "go test",
   "failing test",

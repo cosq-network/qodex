@@ -6,9 +6,19 @@ This roadmap tracks technical activities for Qodex as implementation phases. Sta
 - `in-progress`: partially implemented, usable in limited form, or needing hardening.
 - `planned`: not implemented yet.
 
+This document is a historical implementation roadmap plus a current-state hardening tracker. It is not a guarantee of production readiness. Snapshot: July 16, 2026.
+
 ## Current Snapshot
 
-Qodex has a working Go MVP with Cobra CLI commands, a Bubble Tea TUI with streaming token rendering and diff preview, OpenAI-compatible `llama.cpp` chat completions with SSE streaming support, prompt-based JSON tool calling, local tools, local skills, SQLite persistence, session resume with tool history reconstruction, context compaction, session export, error panel, and backend capability detection.
+Qodex has a working Go MVP with Cobra CLI commands, a Bubble Tea TUI with streaming token rendering and diff preview, OpenAI-compatible chat completions with SSE streaming support, prompt-based and native tool calling, local tools, local skills, SQLite persistence, session resume with tool history reconstruction, context compaction, session export, review mode, project indexing, LSP-backed navigation tools, and backend capability detection.
+
+As of July 16, 2026, the repo also reflects the following recent hardening work:
+
+- documented tools such as `run_tests`, `run_formatter`, `review_changes`, `project_index`, and the LSP tools are registered and reachable through the agent
+- tool-schema tests cover these higher-level tools to prevent future registry drift
+- docs have been cleaned up to remove stale planning/checklist material
+- Windows support is documented more accurately: native Windows can run the CLI, but automatic `llama.cpp` setup is not yet supported outside WSL2
+- setup/docs now describe the current model flow more accurately: backend installation is automated on Linux/macOS, while model download is managed through `qodex models download`
 
 ## Phase 0: Foundation MVP
 
@@ -171,19 +181,32 @@ Goal: turn the local MVP into a distributable developer tool with reliable build
 | --- | --- | --- | --- |
 | completed | Version command | CLI/Packaging | `qodex version` prints version, commit hash, and build timestamp. |
 | completed | Shell completions | CLI/Packaging | `qodex completion bash/zsh/fish/powershell` generates shell completions. |
-| completed | Release builds | Packaging | Cross-platform GoReleaser config targeting macOS, Linux, and Windows (amd64 + arm64). |
+| completed | Release builds | Packaging | Cross-platform GoReleaser config targeting Linux, macOS, and Windows (`amd64` + `arm64`). |
 | completed | Homebrew formula | Packaging | Stub formula at `contrib/homebrew/qodex.rb`. |
-| completed | Install script | Packaging | `scripts/install.sh` downloads and installs from GitHub Releases. |
+| completed | Install scripts | Packaging | `scripts/install.sh` and `scripts/install.ps1` install from GitHub Releases on Unix-like systems and Windows PowerShell. |
 | completed | Contributor guide | Docs | `CONTRIBUTING.md` covers standards, testing, and release process. |
-| completed | CI workflow | Testing/Packaging | GitHub Actions runs tests with race detector on push/PR and releases on tags. |
-| completed | Signed releases | Packaging | GoReleaser signs all artifacts with GPG. See [Release Management](release-management.md). |
+| completed | CI workflow | Testing/Packaging | GitHub Actions lint/test on Linux, macOS, and Windows, plus snapshot packaging validation. |
+| completed | Signed releases | Packaging | Public tag releases require GPG secrets, sign every artifact, and publish the public verification key. |
+| completed | Linux package artifacts | Packaging | GoReleaser publishes `.deb`, `.rpm`, and `.apk` packages alongside archives. |
+| completed | Automated version management | Packaging/Docs | Release Please maintains semantic version tags and `CHANGELOG.md`. |
 
-## Near-Term Priority Order
+## Phase 8: Post-MVP Hardening
 
-1. ~~TUI diff preview before file writes and patches.~~ *(completed)*
-2. ~~Streaming model responses.~~ *(completed)*
-3. ~~Better error panel.~~ *(completed)*
-4. ~~TUI busy state and resume rendering tests.~~ *(completed)*
-5. ~~Context compaction.~~ *(completed)*
-6. ~~Backend capability detection for streaming and native tool calls.~~ *(completed)*
-7. ~~Session export and tool history reconstruction.~~ *(completed)*
+Goal: reduce product risk, close platform/runtime gaps, and improve confidence that documented features behave reliably in real repositories.
+
+| Status | Activity | Area | Notes |
+| --- | --- | --- | --- |
+| completed | Tool registry parity hardening | Tools/Docs | Implemented tools such as `run_tests`, `run_formatter`, `review_changes`, `project_index`, and the LSP tools are now registered and reachable through the agent and native tool schemas. |
+| completed | Tool schema regression coverage | Testing/Tools | Added tests to ensure key higher-level tools stay registered and visible in `ToolSchemas()`. |
+| completed | Docs cleanup and current-state alignment | Docs | Removed stale planning/checklist docs and updated user/developer/security docs to match the current implementation. |
+| completed | Windows managed-backend clarification | Runtime/Docs | Native Windows now fails with a clearer `llama.cpp` setup message; docs explicitly recommend WSL2 for managed installs. |
+| in-progress | Backend/setup UX hardening | Runtime/UX | The setup wizard still relies on a partial model-management flow and does not fully automate every model acquisition path end-to-end. |
+| in-progress | Platform validation beyond build/test coverage | Runtime/QA | CI and packaging now validate builds across Linux, macOS, and Windows, but native Windows runtime behavior still needs deeper real-world validation beyond current unit/integration coverage. |
+| in-progress | Production readiness hardening | Product/Safety | The core assistant works, but broad production readiness still depends on tighter platform validation, operational polish, and continued reduction of docs/code drift. |
+
+## Current Priority Order
+
+1. Harden setup and backend management so first-run flows are more predictable across supported environments.
+2. Expand validation of platform-specific runtime behavior, especially native Windows and external-tool-dependent features.
+3. Improve production-readiness signals through stronger end-to-end validation around real repositories and external toolchains.
+4. Continue reducing code/docs drift by keeping tool exposure, setup behavior, platform support claims, and release packaging expectations in sync.

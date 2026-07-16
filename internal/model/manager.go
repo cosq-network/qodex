@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -22,6 +23,7 @@ const (
 	BackendLlamaCpp Backend = "llama.cpp"
 	BackendVLLM     Backend = "vllm"
 	BackendSGLang   Backend = "sglang"
+	BackendExternal Backend = "external"
 )
 
 type ServerStatus struct {
@@ -30,6 +32,26 @@ type ServerStatus struct {
 	Port    int
 	Model   string
 	Error   string
+}
+
+type Diagnostics struct {
+	Backend          Backend
+	InstallRoot      string
+	BinaryPath       string
+	BackendInstalled bool
+	ModelName        string
+	ModelPath        string
+	ModelPresent     bool
+	Server           ServerStatus
+}
+
+type RuntimeState struct {
+	Backend   string `json:"backend"`
+	Model     string `json:"model"`
+	Port      int    `json:"port"`
+	PID       int    `json:"pid"`
+	Endpoint  string `json:"endpoint"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 type Manager struct {
@@ -57,6 +79,8 @@ func defaultPort(backend Backend) int {
 	switch backend {
 	case BackendLlamaCpp:
 		return 8080
+	case BackendExternal:
+		return 0
 	default:
 		return 8000
 	}
@@ -70,6 +94,14 @@ func (m *Manager) Client() *Client {
 	return m.client
 }
 
+func (m *Manager) setPort(port int) {
+	if port <= 0 {
+		return
+	}
+	m.port = port
+	m.client = NewClient(fmt.Sprintf("http://127.0.0.1:%d/v1", port), m.model)
+}
+
 func (m *Manager) Install(ctx context.Context) error {
 	switch m.backend {
 	case BackendLlamaCpp:
@@ -78,6 +110,8 @@ func (m *Manager) Install(ctx context.Context) error {
 		return m.installVLLM()
 	case BackendSGLang:
 		return m.installSGLang()
+	case BackendExternal:
+		return nil
 	default:
 		return fmt.Errorf("unknown backend: %s", m.backend)
 	}
@@ -95,7 +129,10 @@ func (m *Manager) installLlamaCpp(ctx context.Context) error {
 
 	downloadURL := m.llamaDownloadURL()
 	if downloadURL == "" {
-		return fmt.Errorf("unsupported platform: %s/%s", runtime.GOOS, runtime.GOARCH)
+		if runtime.GOOS == "windows" {
+			return fmt.Errorf("automatic llama.cpp setup is not supported on native Windows yet; use WSL2 or point Qodex at a manually managed OpenAI-compatible endpoint")
+		}
+		return fmt.Errorf("unsupported platform for automatic llama.cpp setup: %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
 
 	if _, ok := ctx.Deadline(); !ok {
@@ -273,11 +310,16 @@ func (m *Manager) pidFile() string {
 	return filepath.Join(m.root, "run", "server.pid")
 }
 
+func (m *Manager) stateFile() string {
+	return filepath.Join(m.root, "run", "state.json")
+}
+
 func (m *Manager) modelsDir() string {
 	return filepath.Join(m.root, "models")
 }
 
 func (m *Manager) Status(ctx context.Context) (ServerStatus, error) {
+	m.applySavedState()
 	status := ServerStatus{Port: m.port, Model: m.model}
 
 	if data, err := os.ReadFile(m.pidFile()); err == nil {
@@ -287,21 +329,64 @@ func (m *Manager) Status(ctx context.Context) (ServerStatus, error) {
 				status.Running = true
 				status.PID = pid
 			}
+		} else {
+			status.Error = "invalid pid file"
 		}
 	}
 
 	if status.Running {
-		checkCtx, cancel := context.WithTimeout(ctx, 2 * time.Second)
+		checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		if err := m.client.Check(checkCtx); err != nil {
 			status.Running = false
+			status.Error = err.Error()
 		}
 	}
 
 	return status, nil
 }
 
+func (m *Manager) Diagnostics(ctx context.Context) Diagnostics {
+	m.applySavedState()
+	diag := Diagnostics{
+		Backend:     m.backend,
+		InstallRoot: m.root,
+		ModelName:   m.model,
+		Server:      ServerStatus{Port: m.port, Model: m.model},
+	}
+
+	switch m.backend {
+	case BackendLlamaCpp:
+		diag.BinaryPath = m.binaryPath()
+		_, err := os.Stat(diag.BinaryPath)
+		diag.BackendInstalled = err == nil
+	case BackendVLLM:
+		if path, err := exec.LookPath("vllm"); err == nil {
+			diag.BinaryPath = path
+			diag.BackendInstalled = true
+		}
+	case BackendSGLang:
+		if path, err := exec.LookPath("sglang"); err == nil {
+			diag.BinaryPath = path
+			diag.BackendInstalled = true
+		}
+	case BackendExternal:
+		diag.BackendInstalled = true
+	}
+
+	diag.ModelPath = m.findModel()
+	diag.ModelPresent = diag.ModelPath != ""
+	if status, err := m.Status(ctx); err == nil {
+		diag.Server = status
+	} else {
+		diag.Server.Error = err.Error()
+	}
+
+	return diag
+}
+
 func (m *Manager) EnsureRunning(ctx context.Context) error {
+	m.applySavedState()
 	status, _ := m.Status(ctx)
 	if status.Running {
 		fmt.Println("Model server already running")
@@ -319,6 +404,8 @@ func (m *Manager) EnsureRunning(ctx context.Context) error {
 		return m.startVLLM(ctx)
 	case BackendSGLang:
 		return m.startSGLang(ctx)
+	case BackendExternal:
+		return nil
 	default:
 		return fmt.Errorf("unknown backend: %s", m.backend)
 	}
@@ -328,6 +415,9 @@ func (m *Manager) startLlamaCpp() error {
 	modelPath := m.findModel()
 	if modelPath == "" {
 		return fmt.Errorf("no model found - download with: qodex models download %s", m.model)
+	}
+	if err := m.ensureUsablePort(); err != nil {
+		return err
 	}
 
 	runDir := filepath.Join(m.root, "run")
@@ -352,11 +442,13 @@ func (m *Manager) startLlamaCpp() error {
 	if err := os.WriteFile(m.pidFile(), []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0o666); err != nil {
 		return fmt.Errorf("write pid file: %w", err)
 	}
+	_ = m.saveState(cmd.Process.Pid)
 
 	for i := 0; i < 30; i++ {
 		time.Sleep(500 * time.Millisecond)
 		status, _ := m.Status(context.Background())
 		if status.Running {
+			_ = m.saveState(cmd.Process.Pid)
 			fmt.Printf("Model server started (PID: %d, Port: %d)\n", cmd.Process.Pid, m.port)
 			return nil
 		}
@@ -393,6 +485,9 @@ func (m *Manager) startVLLM(ctx context.Context) error {
 	if modelPath == "" {
 		return fmt.Errorf("no model found - download with: qodex models download %s", m.model)
 	}
+	if err := m.ensureUsablePort(); err != nil {
+		return err
+	}
 
 	cmd := exec.CommandContext(ctx, "python", "-m", "vllm.entrypoints.openai.api_server",
 		"--model", modelPath,
@@ -406,6 +501,7 @@ func (m *Manager) startVLLM(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start failed: %w", err)
 	}
+	_ = m.saveState(cmd.Process.Pid)
 
 	fmt.Printf("Model server starting (Port: %d)...\n", m.port)
 	return nil
@@ -415,6 +511,9 @@ func (m *Manager) startSGLang(ctx context.Context) error {
 	modelPath := m.findModel()
 	if modelPath == "" {
 		return fmt.Errorf("no model found - download with: qodex models download %s", m.model)
+	}
+	if err := m.ensureUsablePort(); err != nil {
+		return err
 	}
 
 	cmd := exec.CommandContext(ctx, "python", "-m", "sglang.launch_server",
@@ -429,6 +528,7 @@ func (m *Manager) startSGLang(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start failed: %w", err)
 	}
+	_ = m.saveState(cmd.Process.Pid)
 
 	fmt.Printf("Model server starting (Port: %d)...\n", m.port)
 	return nil
@@ -443,12 +543,12 @@ func (m *Manager) FindModelName() string {
 	if _, err := os.Stat(candidate); err == nil {
 		return strings.TrimSuffix(m.model, filepath.Ext(m.model))
 	}
-	
+
 	candidate = filepath.Join(m.modelsDir(), m.model+".gguf")
 	if _, err := os.Stat(candidate); err == nil {
 		return m.model
 	}
-	
+
 	candidate = filepath.Join(m.modelsDir(), m.model+".bin")
 	if _, err := os.Stat(candidate); err == nil {
 		return m.model
@@ -461,4 +561,92 @@ func (m *Manager) FindModelName() string {
 		}
 	}
 	return m.model
+}
+
+func (m *Manager) applySavedState() {
+	state, err := m.LoadState()
+	if err != nil || state.Port <= 0 {
+		return
+	}
+	if state.Model != "" {
+		m.model = state.Model
+	}
+	m.setPort(state.Port)
+}
+
+func (m *Manager) LoadState() (*RuntimeState, error) {
+	data, err := os.ReadFile(m.stateFile())
+	if err != nil {
+		return nil, err
+	}
+	var state RuntimeState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+func (m *Manager) saveState(pid int) error {
+	runDir := filepath.Join(m.root, "run")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		return err
+	}
+	state := RuntimeState{
+		Backend:   string(m.backend),
+		Model:     m.model,
+		Port:      m.port,
+		PID:       pid,
+		Endpoint:  fmt.Sprintf("http://127.0.0.1:%d/v1", m.port),
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(m.stateFile(), data, 0o666)
+}
+
+func (m *Manager) ClearState() error {
+	_ = os.Remove(m.pidFile())
+	if err := os.Remove(m.stateFile()); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func (m *Manager) ensureUsablePort() error {
+	if isPortAvailable(m.port) {
+		return nil
+	}
+	port, err := chooseFreePort()
+	if err != nil {
+		return fmt.Errorf("select free port: %w", err)
+	}
+	m.setPort(port)
+	return nil
+}
+
+func isPortAvailable(port int) bool {
+	if port <= 0 {
+		return false
+	}
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
+}
+
+func chooseFreePort() (int, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer ln.Close()
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		return 0, fmt.Errorf("unexpected address type %T", ln.Addr())
+	}
+	return addr.Port, nil
 }

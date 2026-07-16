@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	runtimepkg "runtime"
 	"strings"
 
 	"github.com/benoybose/qodex/internal/config"
@@ -14,6 +17,13 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
+
+type setupModelSource interface {
+	List() ([]model.ModelInfo, error)
+	Download(context.Context, string) error
+	ModelsDir() string
+	IsDownloaded(string) bool
+}
 
 func setupCmd() *cobra.Command {
 	return &cobra.Command{
@@ -50,6 +60,7 @@ func runSetup(projectRoot string) error {
 	fmt.Println("  1. llama.cpp (recommended for Apple Silicon/Linux)")
 	fmt.Println("  2. vLLM (for HuggingFace models with Python)")
 	fmt.Println("  3. SGLang (high-performance inference)")
+	fmt.Println("  4. External OpenAI-compatible endpoint")
 	fmt.Print("\nChoice [1]: ")
 	choice := readInput(reader, "1")
 
@@ -61,8 +72,18 @@ func runSetup(projectRoot string) error {
 		backend = model.BackendVLLM
 	case "3":
 		backend = model.BackendSGLang
+	case "4":
+		backend = model.BackendExternal
 	default:
 		backend = model.BackendLlamaCpp
+	}
+
+	if fallback := maybeRedirectUnsupportedManagedBackend(reader, backend, os.Stdout); fallback == model.BackendExternal {
+		backend = fallback
+	}
+
+	if backend == model.BackendExternal {
+		return runExternalSetup(projectRoot, reader)
 	}
 
 	// Step 2: Install backend
@@ -81,43 +102,33 @@ func runSetup(projectRoot string) error {
 	// Step 3: Choose/download model
 	fmt.Println("\nStep 3: Choose Model")
 	registry := model.NewModelRegistry(installRoot)
-	models, err := registry.List()
-	if err == nil && len(models) > 0 {
-		fmt.Println("Available models:")
-		for i, m := range models {
-			downloaded := ""
-			if m.Downloaded {
-				downloaded = " (downloaded)"
-			}
-			fmt.Printf("  %d. %s %s%s\n", i+1, m.Name, m.Size, downloaded)
-		}
-		fmt.Print("\nSelect model [1]: ")
-		modelChoice := readInput(reader, "1")
-		idx := 0
-		fmt.Sscanf(modelChoice, "%d", &idx)
-		if idx <= 0 || idx > len(models) {
-			idx = 1
-		}
-		modelName := models[idx-1].Name
-		if !models[idx-1].Downloaded {
-			fmt.Fprintf(os.Stderr, "Manual download required for %s\n", modelName)
-			fmt.Fprintf(os.Stderr, "Place the model file in: %s\n", filepath.Join(installRoot, "models"))
-			fmt.Fprintf(os.Stderr, "Find GGUF models at: https://huggingface.co/models?library=gguf\n")
-		}
-		mgr = model.NewManager(backend, installRoot, modelName, 0)
-	} else {
-		modelName := readInput(reader, "qwen2.5-coder-7b-q4_k_m.gguf")
-		mgr = model.NewManager(backend, installRoot, modelName, 0)
+	modelName, modelReady, err := selectSetupModel(context.Background(), reader, registry, os.Stdout, os.Stderr)
+	if err != nil {
+		fmt.Printf("  ✗ Model setup failed: %s\n", err)
+		fmt.Println("  Continuing with manual model setup...")
 	}
+	if modelName == "" {
+		modelName = readInput(reader, "qwen2.5-coder-7b-q4_k_m.gguf")
+		modelReady = registry.IsDownloaded(modelName)
+		if !modelReady {
+			printManualModelHelp(os.Stderr, modelName, registry.ModelsDir())
+		}
+	}
+	mgr = model.NewManager(backend, installRoot, modelName, 0)
 
 	// Step 4: Start server
 	fmt.Println("\nStep 4: Start Model Server")
-	fmt.Println("Starting model server...")
-	if err := mgr.EnsureRunning(context.Background()); err != nil {
-		fmt.Printf("  ✗ Failed to start: %s\n", err)
-		fmt.Println("  You can start it manually later with: qodex serve start")
+	if !modelReady {
+		fmt.Println("Skipping automatic start because no local model is available yet.")
+		fmt.Println("Download the selected model with 'qodex models download <model-name>' and then run 'qodex serve start'.")
 	} else {
-		fmt.Println("  ✓ Model server running")
+		fmt.Println("Starting model server...")
+		if err := mgr.EnsureRunning(context.Background()); err != nil {
+			fmt.Printf("  ✗ Failed to start: %s\n", err)
+			fmt.Println("  You can start it manually later with: qodex serve start")
+		} else {
+			fmt.Println("  ✓ Model server running")
+		}
 	}
 
 	// Step 5: Create config
@@ -126,7 +137,129 @@ func runSetup(projectRoot string) error {
 	cfg.Runtime.Backend = string(backend)
 	cfg.Model.BaseURL = fmt.Sprintf("http://127.0.0.1:%d/v1", mgr.Port())
 	cfg.Model.Model = mgr.FindModelName()
+	if err := writeSetupFiles(projectRoot, cfg); err != nil {
+		return err
+	}
 
+	// Summary
+	fmt.Println()
+	fmt.Println("╔══════════════════════════════════════════════╗")
+	fmt.Println("║         Setup Complete!                     ║")
+	fmt.Println("╚══════════════════════════════════════════════╝")
+	fmt.Println()
+	fmt.Printf("  Model endpoint: http://127.0.0.1:%d/v1\n", mgr.Port())
+	fmt.Printf("  Backend:        %s\n", backend)
+	fmt.Printf("  Model:          %s\n", cfg.Model.Model)
+	fmt.Println()
+	fmt.Println("  Next steps:")
+	fmt.Println("    qodex chat               Start the interactive TUI")
+	fmt.Println(`    qodex run "hello"         Run a one-shot prompt`)
+	fmt.Println("    qodex serve status        Check server status")
+	fmt.Println("    qodex serve stop          Stop the server when done")
+	fmt.Println()
+
+	return nil
+}
+
+func runExternalSetup(projectRoot string, reader *bufio.Reader) error {
+	fmt.Println("\nExternal endpoint mode")
+	fmt.Println("Qodex will use an existing OpenAI-compatible endpoint instead of managing a local backend.")
+
+	fmt.Print("Endpoint URL [http://127.0.0.1:8080/v1]: ")
+	baseURL := readInput(reader, "http://127.0.0.1:8080/v1")
+	fmt.Print("Model name [qwen2.5-coder]: ")
+	modelName := readInput(reader, "qwen2.5-coder")
+
+	fmt.Println("\nCreating Configuration")
+	cfg := config.Defaults(projectRoot)
+	cfg.Runtime.Backend = string(model.BackendExternal)
+	cfg.Model.BaseURL = strings.TrimRight(baseURL, "/")
+	cfg.Model.Model = modelName
+
+	if err := writeSetupFiles(projectRoot, cfg); err != nil {
+		return err
+	}
+
+	fmt.Println()
+	fmt.Println("╔══════════════════════════════════════════════╗")
+	fmt.Println("║         Setup Complete!                     ║")
+	fmt.Println("╚══════════════════════════════════════════════╝")
+	fmt.Println()
+	fmt.Printf("  Endpoint:       %s\n", cfg.Model.BaseURL)
+	fmt.Printf("  Backend:        %s\n", cfg.Runtime.Backend)
+	fmt.Printf("  Model:          %s\n", cfg.Model.Model)
+	fmt.Println()
+	fmt.Println("  Next steps:")
+	fmt.Println("    qodex doctor             Verify endpoint connectivity")
+	fmt.Println("    qodex chat               Start the interactive TUI")
+	fmt.Println(`    qodex run "hello"         Run a one-shot prompt`)
+	fmt.Println()
+	return nil
+}
+
+func readInput(reader *bufio.Reader, fallback string) string {
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return fallback
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return fallback
+	}
+	return line
+}
+
+func promptYesNo(reader *bufio.Reader, out io.Writer, prompt string, fallback bool) bool {
+	if out != nil {
+		fmt.Fprint(out, prompt)
+	}
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return fallback
+	}
+	line = strings.TrimSpace(strings.ToLower(line))
+	if line == "" {
+		return fallback
+	}
+	return line == "y" || line == "yes"
+}
+
+func printManualModelHelp(errOut io.Writer, modelName, modelsDir string) {
+	fmt.Fprintf(errOut, "Manual download required for %s\n", modelName)
+	fmt.Fprintf(errOut, "Place the model file in: %s\n", modelsDir)
+	fmt.Fprintf(errOut, "Or run: qodex models download %s\n", modelName)
+	fmt.Fprintf(errOut, "Find GGUF models at: https://huggingface.co/models?library=gguf\n")
+}
+
+func maybeRedirectUnsupportedManagedBackend(reader *bufio.Reader, backend model.Backend, out io.Writer) model.Backend {
+	switch backend {
+	case model.BackendLlamaCpp:
+		if runtimepkg.GOOS == "windows" {
+			fmt.Fprintln(out, "\nNative Windows does not support automatic llama.cpp setup yet.")
+			fmt.Fprintln(out, "WSL2 is recommended for managed local backends.")
+			if promptYesNo(reader, out, "Configure an external endpoint instead? [Y/n]: ", true) {
+				return model.BackendExternal
+			}
+		}
+	case model.BackendVLLM:
+		if _, err := exec.LookPath("pip"); err != nil {
+			fmt.Fprintln(out, "\nvLLM requires Python and pip on this machine.")
+			if promptYesNo(reader, out, "Configure an external endpoint instead? [Y/n]: ", true) {
+				return model.BackendExternal
+			}
+		}
+	case model.BackendSGLang:
+		if _, err := exec.LookPath("pip"); err != nil {
+			fmt.Fprintln(out, "\nSGLang requires Python and pip on this machine.")
+			if promptYesNo(reader, out, "Configure an external endpoint instead? [Y/n]: ", true) {
+				return model.BackendExternal
+			}
+		}
+	}
+	return backend
+}
+
+func writeSetupFiles(projectRoot string, cfg config.Config) error {
 	qodexDir := filepath.Join(projectRoot, ".qodex")
 	configPath := filepath.Join(qodexDir, "config.toml")
 	skillDir := filepath.Join(qodexDir, "skills", "project")
@@ -177,37 +310,45 @@ Use this skill for repository-specific conventions.
 		return fmt.Errorf("write skill: %w", err)
 	}
 	fmt.Printf("  ✓ Created %s\n", skillPath)
-
-	// Summary
-	fmt.Println()
-	fmt.Println("╔══════════════════════════════════════════════╗")
-	fmt.Println("║         Setup Complete!                     ║")
-	fmt.Println("╚══════════════════════════════════════════════╝")
-	fmt.Println()
-	fmt.Printf("  Model endpoint: http://127.0.0.1:%d/v1\n", mgr.Port())
-	fmt.Printf("  Backend:        %s\n", backend)
-	fmt.Printf("  Model:          %s\n", cfg.Model.Model)
-	fmt.Println()
-	fmt.Println("  Next steps:")
-	fmt.Println("    qodex chat               Start the interactive TUI")
-	fmt.Println(`    qodex run "hello"         Run a one-shot prompt`)
-	fmt.Println("    qodex serve status        Check server status")
-	fmt.Println("    qodex serve stop          Stop the server when done")
-	fmt.Println()
-
 	return nil
 }
 
-func readInput(reader *bufio.Reader, fallback string) string {
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		return fallback
+func selectSetupModel(ctx context.Context, reader *bufio.Reader, registry setupModelSource, out, errOut io.Writer) (string, bool, error) {
+	models, err := registry.List()
+	if err != nil || len(models) == 0 {
+		return "", false, err
 	}
-	line = strings.TrimSpace(line)
-	if line == "" {
-		return fallback
+
+	fmt.Fprintln(out, "Available models:")
+	for i, m := range models {
+		downloaded := ""
+		if m.Downloaded {
+			downloaded = " (downloaded)"
+		}
+		fmt.Fprintf(out, "  %d. %s %s%s\n", i+1, m.Name, m.Size, downloaded)
 	}
-	return line
+	fmt.Fprint(out, "\nSelect model [1]: ")
+	modelChoice := readInput(reader, "1")
+	idx := 0
+	fmt.Sscanf(modelChoice, "%d", &idx)
+	if idx <= 0 || idx > len(models) {
+		idx = 1
+	}
+
+	modelName := models[idx-1].Name
+	if models[idx-1].Downloaded || registry.IsDownloaded(modelName) {
+		return modelName, true, nil
+	}
+
+	fmt.Fprintf(out, "Model %s is not downloaded.\n", modelName)
+	if !promptYesNo(reader, out, "Download now? [Y/n]: ", true) {
+		printManualModelHelp(errOut, modelName, registry.ModelsDir())
+		return modelName, false, nil
+	}
+	if err := registry.Download(ctx, modelName); err != nil {
+		return modelName, false, err
+	}
+	return modelName, true, nil
 }
 
 func ensureConfigExists(projectRoot string) bool {

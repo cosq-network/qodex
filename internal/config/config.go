@@ -299,9 +299,9 @@ func (c Config) Validate() error {
 		return fmt.Errorf("model.model is required")
 	}
 	switch c.Runtime.Backend {
-	case "llama.cpp", "vllm", "sglang":
+	case "llama.cpp", "vllm", "sglang", "external":
 	default:
-		return fmt.Errorf("runtime.backend must be one of: llama.cpp, vllm, sglang")
+		return fmt.Errorf("runtime.backend must be one of: llama.cpp, vllm, sglang, external")
 	}
 	if c.Runtime.ContextTokens <= 0 {
 		return fmt.Errorf("runtime.context_tokens must be positive")

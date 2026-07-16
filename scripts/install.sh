@@ -49,7 +49,11 @@ esac
 if [ "$VERSION" = "latest" ]; then
   URL="https://github.com/$REPO/releases/latest/download/${BINARY}_${OS}_${ARCH}.tar.gz"
 else
-  URL="https://github.com/$REPO/releases/download/v${VERSION}/${BINARY}_${OS}_${ARCH}.tar.gz"
+  case "$VERSION" in
+    v*) TAG="$VERSION" ;;
+    *)  TAG="v$VERSION" ;;
+  esac
+  URL="https://github.com/$REPO/releases/download/${TAG}/${BINARY}_${OS}_${ARCH}.tar.gz"
 fi
 
 echo "Downloading qodex $VERSION ($OS/$ARCH)..."

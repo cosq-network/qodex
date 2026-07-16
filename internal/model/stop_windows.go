@@ -30,7 +30,7 @@ func (m *Manager) Stop() error {
 		}
 	}
 
-	os.Remove(m.pidFile())
+	_ = m.ClearState()
 	fmt.Println("Model server stopped")
 	return nil
 }

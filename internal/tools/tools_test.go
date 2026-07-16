@@ -187,6 +187,31 @@ func TestGitLogInRepo(t *testing.T) {
 	}
 }
 
+func TestAdvancedProjectToolsRegistered(t *testing.T) {
+	registry := NewRegistry(t.TempDir())
+	cases := map[string]string{
+		"run_tests":           "shell",
+		"run_formatter":       "shell",
+		"review_changes":      "read",
+		"project_index":       "read",
+		"lsp_diagnostics":     "read",
+		"lsp_definition":      "read",
+		"lsp_find_references": "read",
+	}
+	for name, effect := range cases {
+		tool, ok := registry.Get(name)
+		if !ok {
+			t.Fatalf("%s not registered", name)
+		}
+		if tool.Effect != effect {
+			t.Fatalf("expected effect %s for %s, got %s", effect, name, tool.Effect)
+		}
+		if tool.Description == "" {
+			t.Fatalf("%s has no description", name)
+		}
+	}
+}
+
 func TestCmakeToolsRegistered(t *testing.T) {
 	registry := NewRegistry(t.TempDir())
 	for _, name := range []string{"cmake_configure", "cmake_build"} {
@@ -548,13 +573,13 @@ func TestNmakeBuildRegistered(t *testing.T) {
 func TestPackageManagersRegistered(t *testing.T) {
 	registry := NewRegistry(t.TempDir())
 	expected := map[string]string{
-		"winget_install":    "network",
-		"choco_install":     "network",
-		"apt_install":       "shell",
-		"apt_get_install":   "shell",
-		"snap_install":      "network",
-		"dnf_install":       "network",
-		"brew_install":      "network",
+		"winget_install":  "network",
+		"choco_install":   "network",
+		"apt_install":     "shell",
+		"apt_get_install": "shell",
+		"snap_install":    "network",
+		"dnf_install":     "network",
+		"brew_install":    "network",
 	}
 	for name, effect := range expected {
 		tool, ok := registry.Get(name)
@@ -876,9 +901,9 @@ func TestUserDelRegistered(t *testing.T) {
 func TestSystemToolsRequireFields(t *testing.T) {
 	registry := NewRegistry(t.TempDir())
 	cases := []struct {
-		name string
+		name     string
 		toolName string
-		args map[string]interface{}
+		args     map[string]interface{}
 	}{
 		{"grep_pattern", "grep_search", map[string]interface{}{}},
 		{"tail_path", "tail_file", map[string]interface{}{}},

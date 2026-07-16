@@ -6,20 +6,20 @@ class Qodex < Formula
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/benoybose/qodex/releases/download/v#{version}/qodex_Darwin_arm64.tar.gz"
+      url "https://github.com/benoybose/qodex/releases/download/v#{version}/qodex_darwin_arm64.tar.gz"
       sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     else
-      url "https://github.com/benoybose/qodex/releases/download/v#{version}/qodex_Darwin_x86_64.tar.gz"
+      url "https://github.com/benoybose/qodex/releases/download/v#{version}/qodex_darwin_x86_64.tar.gz"
       sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/benoybose/qodex/releases/download/v#{version}/qodex_Linux_arm64.tar.gz"
+      url "https://github.com/benoybose/qodex/releases/download/v#{version}/qodex_linux_arm64.tar.gz"
       sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     else
-      url "https://github.com/benoybose/qodex/releases/download/v#{version}/qodex_Linux_x86_64.tar.gz"
+      url "https://github.com/benoybose/qodex/releases/download/v#{version}/qodex_linux_x86_64.tar.gz"
       sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     end
   end

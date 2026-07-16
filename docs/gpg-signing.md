@@ -1,16 +1,18 @@
 # Release: GPG Signing Setup
 
-Use this document to enable or skip GPG signing for Qodex GitHub Releases.
+Use this document to configure the signing key required by the public release workflow.
+
+For the full repository setup, including `RELEASE_PLEASE_TOKEN`, Actions settings, and branch protection guidance, see [github-release-setup.md](./github-release-setup.md).
 
 ## Purpose
 
-Signing attaches a detached `.sig` to every release artifact so users can verify the binary came from this project. It does not change how GoReleaser builds or publishes releases.
+Signing attaches a detached `.sig` to every release artifact so users can verify the binary came from this project. The release workflow also publishes the matching ASCII-armored public key as `gpg-public-key.asc`.
 
 ## How this project uses signing now
 
-- CI imports the key only when `GPG_FINGERPRINT` is set.
-- GoReleaser already runs `go mod tidy`, builds, creates archives, checksums, and a GitHub Release.
-- Signing is used only if you provide `GPG_PRIVATE_KEY` and `GPG_FINGERPRINT` as GitHub Actions secrets.
+- Public tag releases require `GPG_PRIVATE_KEY` and `GPG_FINGERPRINT` GitHub Actions secrets.
+- The release workflow imports the private key, runs GoReleaser, signs every published artifact, and uploads `gpg-public-key.asc` to the GitHub Release.
+- Development builds and snapshot packaging do not require GPG.
 
 ## Prerequisites
 
@@ -77,12 +79,12 @@ gpg --import gpg-public-key.asc
 gpg --verify qodex_*.tar.gz.sig qodex_*.tar.gz
 ```
 
-## Optional: skip signing entirely
+## Development vs release
 
-You do not need GPG for development builds or internal testing. If `GPG_FINGERPRINT` is not set:
-- The release workflow skips key import.
-- GoReleaser produces unsigned artifacts and continues the release.
+You do not need GPG for local builds, CI test runs, or snapshot packaging:
 
-To remove signing end to end:
-1. Delete the `GPG_PRIVATE_KEY` and `GPG_FINGERPRINT` secrets.
-2. Remove or comment the `signs:` section in `.goreleaser.yaml`.
+```sh
+goreleaser release --snapshot --clean --skip=publish,sign
+```
+
+Public tag releases are intentionally stricter. If the signing secrets are missing, `.github/workflows/release.yml` fails before publishing anything.

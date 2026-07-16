@@ -155,4 +155,17 @@ func TestToolSchemas(t *testing.T) {
 	if !names["list_files"] {
 		t.Fatal("expected list_files in tool schemas")
 	}
+	for _, name := range []string{
+		"run_tests",
+		"run_formatter",
+		"review_changes",
+		"project_index",
+		"lsp_diagnostics",
+		"lsp_definition",
+		"lsp_find_references",
+	} {
+		if !names[name] {
+			t.Fatalf("expected %s in tool schemas", name)
+		}
+	}
 }

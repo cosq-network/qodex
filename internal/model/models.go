@@ -22,6 +22,23 @@ func (r *ModelRegistry) ModelsDir() string {
 	return filepath.Join(r.installRoot, "models")
 }
 
+func (r *ModelRegistry) IsDownloaded(modelName string) bool {
+	if modelName == "" {
+		return false
+	}
+	candidates := []string{
+		filepath.Join(r.ModelsDir(), modelName),
+		filepath.Join(r.ModelsDir(), modelName+".gguf"),
+		filepath.Join(r.ModelsDir(), modelName+".bin"),
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 type ModelInfo struct {
 	Name       string
 	Size       string
@@ -88,7 +105,7 @@ func (r *ModelRegistry) Download(ctx context.Context, modelName string) error {
 	}
 
 	fmt.Printf("Downloading %s...\n", modelName)
-	
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelURL, nil)
 	if err != nil {
 		return err

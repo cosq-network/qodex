@@ -8,7 +8,7 @@ Qodex is a local terminal coding assistant. It runs against a locally hosted Qwe
 - A terminal with true color support.
 - `ripgrep` and `git` installed for the best experience.
 
-Qodex manages backend installation and model downloads automatically. Run `qodex` or `qodex setup` for an interactive wizard that handles everything.
+Qodex manages backend installation automatically on Linux and macOS. Model downloads are available through `qodex models download`, and the setup wizard helps you select a model but does not automatically fetch every model choice. On Windows, WSL2 is the recommended path for managed local backends; native Windows can still connect to a manually managed OpenAI-compatible endpoint. Run `qodex` or `qodex setup` for the interactive wizard.
 
 ## System Requirements
 
@@ -52,8 +52,8 @@ Larger models (14B–32B) or GPU-accelerated inference:
 #### Windows
 
 - **OS**: Windows 10 22H2+ or Windows 11.
-- **WSL2**: recommended for best compatibility with llama.cpp binaries and Python-based backends.
-- **Native**: `qodex` runs natively, but GPU acceleration requires a CUDA-capable setup.
+- **WSL2**: recommended for managed llama.cpp installs and best compatibility with Python-based backends.
+- **Native**: `qodex` runs natively, but automatic llama.cpp setup is not available yet. Use a manually managed OpenAI-compatible endpoint if you stay outside WSL2.
 - **Terminal**: Windows Terminal with a Nerd Font for the best TUI experience.
 
 ### Memory Sizing By Model
@@ -87,10 +87,11 @@ Smaller models are useful for testing the app, but they will make more mistakes 
 Run `qodex` without arguments for the first time, or run `qodex setup` explicitly, to start the interactive setup wizard:
 
 1. **Choose Backend** — Select `llama.cpp` (default), `vLLM`, or `SGLang`
-2. **Install Backend** — Qodex downloads and installs the backend binaries automatically
-3. **Choose Model** — Select from available Qwen Coder models
-4. **Start Server** — Qodex starts the model server in the background
-5. **Create Config** — Writes `.qodex/config.toml` and a starter project skill
+2. **Install Backend** — On Linux and macOS, Qodex downloads and installs the backend binaries automatically. On Windows, use WSL2 for managed installs or configure a backend manually.
+3. **Choose Model** — Select from the known model list or enter a model name manually
+4. **Download Or Place Model** — If the model is not already present, use `qodex models download <model-name>` or place the GGUF file in the configured models directory
+5. **Start Server** — Qodex attempts to start the model server in the background
+6. **Create Config** — Writes `.qodex/config.toml` and a starter project skill
 
 After setup, use these commands to manage the model server:
 

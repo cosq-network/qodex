@@ -9,10 +9,11 @@ permissions:
 
 jobs:
   release:
-    name: Build & release
+    name: Build and release
     runs-on: ubuntu-latest
-    outputs:
-      published: ${{ steps.release.outputs.published }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
@@ -23,18 +24,32 @@ jobs:
           go-version: "1.26"
           cache: true
 
-      - name: Run tests
-        run: go test -race -count=1 ./...
+      - name: Validate signing configuration
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
+        run: |
+          if [[ -z "${GPG_PRIVATE_KEY}" || -z "${GPG_FINGERPRINT}" ]]; then
+            echo "GPG_PRIVATE_KEY and GPG_FINGERPRINT must be configured for public signed releases."
+            exit 1
+          fi
 
       - name: Import GPG key
-        if: ${{ secrets.GPG_FINGERPRINT != '' }}
         uses: crazy-max/ghaction-import-gpg@v6
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ""
+          fingerprint: ${{ secrets.GPG_FINGERPRINT }}
+
+      - name: Export public signing key
+        run: gpg --armor --export "${GPG_FINGERPRINT}" > gpg-public-key.asc
+        env:
+          GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
+
+      - name: Run tests
+        run: go test -race -count=1 ./...
 
       - name: GoReleaser
-        id: release
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
@@ -43,3 +58,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
+
+      - name: Upload public signing key
+        uses: softprops/action-gh-release@v2
+        with:
+          files: gpg-public-key.asc
