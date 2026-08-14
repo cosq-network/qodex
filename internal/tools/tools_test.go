@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSafePathRejectsEscape(t *testing.T) {
@@ -92,6 +93,78 @@ func TestRunCommandArgvRejectsDangerousCommand(t *testing.T) {
 	if _, err := tool.Execute(context.Background(), args); err == nil {
 		t.Fatal("expected dangerous argv rejection")
 	}
+}
+
+func TestRunTestsUsesRealGoTool(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module external-test\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sample_test.go"), []byte("package external_test\n\nimport \"testing\"\n\nfunc TestSmoke(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool, ok := NewRegistry(root).Get("run_tests")
+	if !ok {
+		t.Fatal("run_tests not registered")
+	}
+	args, _ := json.Marshal(map[string]interface{}{"framework": "go", "pattern": "./...", "timeout_seconds": 30})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("run_tests error: %v", err)
+	}
+	if !result.OK || !strings.Contains(result.Content, "ok") {
+		t.Fatalf("run_tests result = %#v", result)
+	}
+}
+
+func TestRunFormatterUsesRealGoTool(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module formatter-test\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, "main.go")
+	if err := os.WriteFile(file, []byte("package main\nfunc main(){println(\"ok\")}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool, ok := NewRegistry(root).Get("run_formatter")
+	if !ok {
+		t.Fatal("run_formatter not registered")
+	}
+	args, _ := json.Marshal(map[string]string{"tool": "go", "path": "main.go"})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("run_formatter error: %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("run_formatter result = %#v", result)
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "func main() {") {
+		t.Fatalf("formatter did not format file: %q", data)
+	}
+}
+
+func TestRunWithKillCancelsAndCleansUpProcess(t *testing.T) {
+	t.Setenv("QODEX_TOOL_HELPER_PROCESS", "1")
+	cmd := exec.Command(os.Args[0], "-test.run=TestToolHelperProcess")
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	out, err := runWithKill(ctx, cmd)
+	if err != context.DeadlineExceeded {
+		t.Fatalf("runWithKill error = %v, want deadline exceeded (output=%q)", err, out)
+	}
+}
+
+func TestToolHelperProcess(t *testing.T) {
+	if os.Getenv("QODEX_TOOL_HELPER_PROCESS") != "1" {
+		return
+	}
+	time.Sleep(10 * time.Second)
 }
 
 func TestIsNetworkCommand(t *testing.T) {

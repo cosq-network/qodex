@@ -28,6 +28,9 @@ As of August 14, 2026, the repo also reflects the following recent hardening wor
 - setup writes configuration and starter skills atomically and refuses to persist a managed configuration after installation, model acquisition, or startup failure
 - llama.cpp installation uses a pinned release by default, with optional environment overrides for release version and SHA-256 verification
 - CI includes cross-platform CLI smoke checks in addition to build, vet, race-test, and packaging validation
+- CI now installs and exercises `gopls`, Git, and GPG across the Linux/macOS/Windows test matrix, including isolated commit and detached-signature checks
+- release tags now run install smoke tests against the published Linux, macOS, and Windows assets, validating installer URLs, permissions, executable startup, and version metadata
+- distribution URLs and Homebrew metadata now use the canonical `cosq-network/qodex` repository, and release smoke tests protect against regressions in those paths
 - MCP stdio client support discovers and exposes namespaced MCP tools through the normal approval and persistence path
 - interoperable instruction discovery loads `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, Cursor rules, and Copilot instructions
 - specialized tool schemas are skill-gated so language/runtime tool packs are omitted from the model context unless relevant
@@ -205,6 +208,7 @@ Goal: turn the local MVP into a distributable developer tool with reliable build
 | completed | Release builds | Packaging | Cross-platform GoReleaser config targeting Linux, macOS, and Windows (`amd64` + `arm64`). |
 | completed | Homebrew formula | Packaging | Stub formula at `contrib/homebrew/qodex.rb`. |
 | completed | Install scripts | Packaging | `scripts/install.sh` and `scripts/install.ps1` install from GitHub Releases on Unix-like systems and Windows PowerShell. |
+| completed | Published install smoke tests | Testing/Packaging | Tag releases download and execute the published artifact through the official installer on Ubuntu, macOS, and Windows. |
 | completed | Contributor guide | Docs | `CONTRIBUTING.md` covers standards, testing, and release process. |
 | completed | CI workflow | Testing/Packaging | GitHub Actions lint/test on Linux, macOS, and Windows, plus snapshot packaging validation. |
 | completed | Signed releases | Packaging | Public tag releases require GPG secrets, sign every artifact, and publish the public verification key. |
@@ -231,7 +235,7 @@ Goal: reduce product risk, close platform/runtime gaps, and improve confidence t
 | completed | Git workflow hardening | Git/Tools | Added high-signal workspace summaries, path-scoped commits that protect unrelated staged work, branch/worktree management, tracked-worktree snapshots kept outside Git status, explicit restoration, and history-preserving undo. |
 | completed | MCP server diagnostics | Extensibility/QA | `qodex mcp list` and `qodex mcp doctor [NAME]` check command installation, environment-backed authentication, MCP initialization/ping, tool discovery, server identity, and capabilities with actionable hints. |
 | completed | MCP trust and permission controls | Safety/Extensibility | MCP servers support `ask`, `trusted`, and `blocked` trust states; per-tool `allow`, `ask`, and `deny` rules override the global network policy, including under `--yes`. |
-| in-progress | Platform validation beyond build/test coverage | Runtime/QA | CI now exercises builds, package tests, and CLI smoke commands across Linux, macOS, and Windows. Native Windows backend behavior and external-tool-dependent features still need real-environment validation. |
+| in-progress | Platform validation beyond build/test coverage | Runtime/QA | CI now exercises builds, package tests, CLI smoke commands, external Git/GPG/LSP/tool cancellation checks, and published install scripts across Linux, macOS, and Windows. Native Windows backend behavior and external-tool-dependent features still need real-environment validation. |
 | in-progress | Production readiness hardening | Product/Safety | Setup, managed runtime failure handling, MCP approval boundaries, and Git mutation workflows are hardened; remaining work is broader real-repository end-to-end validation, external toolchain coverage, and operational polish. |
 
 ## Current Priority Order

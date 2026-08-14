@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="benoybose/qodex"
+REPO="cosq-network/qodex"
 BINARY="qodex"
 
 usage() {

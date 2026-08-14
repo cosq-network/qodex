@@ -1,7 +1,7 @@
 {
   "name": "qodex",
   "desc": "Qodex CLI",
-  "homepage": "https://github.com/benoybose/qodex",
+  "homepage": "https://github.com/cosq-network/qodex",
   "versions": {
     "stable": "0.1.0"
   },

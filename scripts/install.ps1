@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$repo = "benoybose/qodex"
+$repo = "cosq-network/qodex"
 $binary = "qodex.exe"
 
 switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()) {

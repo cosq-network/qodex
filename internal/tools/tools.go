@@ -1032,7 +1032,9 @@ func runWithKill(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
 	case r := <-done:
 		return r.out, r.err
 	case <-ctx.Done():
-		_ = cmd.Process.Kill()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
 		<-done
 		return nil, ctx.Err()
 	}
@@ -1052,7 +1054,9 @@ func runWithKillStdin(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
 	case r := <-done:
 		return r.out, r.err
 	case <-ctx.Done():
-		_ = cmd.Process.Kill()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
 		<-done
 		return nil, ctx.Err()
 	}

@@ -90,7 +90,7 @@ Merging the release PR creates and pushes the next `v*` tag automatically. That 
 
 ### 4. Verify the release
 
-1. Open https://github.com/benoybose/qodex/releases.
+1. Open https://github.com/cosq-network/qodex/releases.
 2. Confirm the release has:
    - `qodex_linux_*`, `qodex_darwin_*`, `qodex_windows_*` archives
    - Linux `.deb`, `.rpm`, and `.apk` packages
@@ -120,14 +120,14 @@ Update the `sha256` entries in `contrib/homebrew/qodex.rb` with the actual value
 ### 6. Test install flows
 
 ```sh
-curl -fsSL https://github.com/benoybose/qodex/raw/main/scripts/install.sh | sh
+curl -fsSL https://github.com/cosq-network/qodex/raw/main/scripts/install.sh | sh
 qodex version
 ```
 
 On Windows PowerShell:
 
 ```powershell
-irm https://github.com/benoybose/qodex/raw/main/scripts/install.ps1 | iex
+irm https://github.com/cosq-network/qodex/raw/main/scripts/install.ps1 | iex
 qodex version
 ```
 

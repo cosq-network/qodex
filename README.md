@@ -39,6 +39,7 @@ The repository includes a fully featured coding agent with:
 - Managed model server lifecycle: install the backend, acquire the backend-appropriate model, and start/stop/status the server from the CLI. Catalog GGUF downloads resume interrupted transfers, report live progress, and validate the GGUF header. Managed startup waits for `/v1/models` readiness, cleans stale runtime state, and llama.cpp starts with the configured context size and CPU thread count.
 - Hardened setup flow: setup uses backend-specific model contracts, writes configuration atomically only after required setup succeeds, and pins the managed llama.cpp release. `QODEX_LLAMA_CPP_VERSION` overrides the release; `QODEX_LLAMA_CPP_SHA256` optionally verifies its archive.
 - Hardening coverage: stalled MCP calls honor context deadlines, MCP name collisions fail closed, Git path-scoped commits avoid unrelated staged files, Git snapshots stay ignored, and managed Windows PID checks verify process liveness.
+- Cross-platform validation: CI exercises Git, GPG, Go, `gopls`, formatter/test-runner execution, path handling, cancellation, process cleanup, and CLI behavior on Linux, macOS, and Windows.
 
 ## CLI Reference
 
@@ -327,6 +328,8 @@ User configuration and managed model data use the platform's native user configu
 
 No CGO is required. `CGO_ENABLED=0` builds are supported and tested.
 
+Release install smoke tests download the tagged artifacts and run `qodex version` on Ubuntu, macOS, and Windows. Native Windows backend installation remains intentionally unsupported; use WSL2 or a manually managed OpenAI-compatible endpoint.
+
 See the [User Guide](docs/user-guide.md) for per-platform notes on terminal setup, WSL2, and model backends.
 
 ## Build
@@ -362,19 +365,19 @@ make install
 ### Install script (from GitHub Releases)
 
 ```sh
-curl -fsSL https://github.com/benoybose/qodex/raw/main/scripts/install.sh | sh
+curl -fsSL https://github.com/cosq-network/qodex/raw/main/scripts/install.sh | sh
 ```
 
 ### Windows PowerShell install
 
 ```powershell
-irm https://github.com/benoybose/qodex/raw/main/scripts/install.ps1 | iex
+irm https://github.com/cosq-network/qodex/raw/main/scripts/install.ps1 | iex
 ```
 
 ### Homebrew
 
 ```sh
-brew install benoybose/qodex/qodex
+brew install cosq-network/qodex/qodex
 ```
 
 ## Release Automation
@@ -384,7 +387,9 @@ Releases use Release Please plus GoReleaser:
 - conventional commits merged to `main` update a release PR and `CHANGELOG.md`
 - merging the release PR with `RELEASE_PLEASE_TOKEN` configured creates the next semantic `v*` tag
 - tag pushes publish signed GitHub Release artifacts for Linux, macOS, and Windows
+- macOS artifacts are published as `qodex_darwin_arm64.tar.gz` and `qodex_darwin_x86_64.tar.gz`; Windows artifacts are published as `.zip` archives
 - Linux releases also publish `.deb`, `.rpm`, and `.apk` packages
+- after publication, a matrix smoke test downloads each platform artifact through the official install script and verifies its version metadata
 
 ## Runtime Shape
 
