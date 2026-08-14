@@ -162,12 +162,13 @@ Create these secrets:
 |---|---|
 | `GPG_PRIVATE_KEY` | Full contents of `gpg-private-key.asc` |
 | `GPG_FINGERPRINT` | Full 40-character fingerprint |
+| `GPG_PASSPHRASE` | Passphrase for the protected signing key |
 | `RELEASE_PLEASE_TOKEN` | Fine-grained PAT or classic PAT with the required repo permissions |
 
 Notes:
 
 - `GITHUB_TOKEN` is provided automatically by GitHub Actions. Do not create it manually.
-- If you rotate the GPG key, update both `GPG_PRIVATE_KEY` and `GPG_FINGERPRINT`.
+- If you rotate the GPG key, update `GPG_PRIVATE_KEY`, `GPG_FINGERPRINT`, and `GPG_PASSPHRASE` together.
 - If you rotate the Release Please token, update `RELEASE_PLEASE_TOKEN`.
 
 ## 7. Configure GitHub Actions settings

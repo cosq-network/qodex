@@ -159,8 +159,12 @@ The release workflow validates the secrets first, then imports the GPG key befor
 
 ```yaml
 - name: Validate signing configuration
+  env:
+    GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+    GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
+    GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
   run: |
-    if [[ -z "${GPG_PRIVATE_KEY}" || -z "${GPG_FINGERPRINT}" ]]; then
+    if [[ -z "${GPG_PRIVATE_KEY}" || -z "${GPG_FINGERPRINT}" || -z "${GPG_PASSPHRASE}" ]]; then
       exit 1
     fi
 
@@ -206,7 +210,7 @@ Never re-use a tag that was already released.
 |---|---|
 | Create GPG key | `gpg --full-generate-key` |
 | Export public key | `gpg --export --armor FINGERPRINT > gpg-public-key.asc` |
-| Store secrets | `GPG_PRIVATE_KEY` + `GPG_FINGERPRINT` in GitHub repo |
+| Store secrets | `GPG_PRIVATE_KEY` + `GPG_FINGERPRINT` + `GPG_PASSPHRASE` in GitHub repo |
 | Store release token | `RELEASE_PLEASE_TOKEN` in GitHub repo |
 | Open/update release PR | automatic on push to `main` |
 | Merge release PR | creates and pushes the next `v*` tag |
