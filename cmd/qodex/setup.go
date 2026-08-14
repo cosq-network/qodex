@@ -23,6 +23,19 @@ type setupModelSource interface {
 	Download(context.Context, string) error
 	ModelsDir() string
 	IsDownloaded(string) bool
+	SetProgressFunc(model.ProgressFunc)
+}
+
+func downloadProgress() model.ProgressFunc {
+	bar := model.NewProgress(0)
+	return func(downloaded, total int64) {
+		bar.Update(downloaded, total)
+		if isatty.IsTerminal(os.Stderr.Fd()) {
+			bar.WriteCLI(os.Stderr, 30)
+		} else {
+			bar.WriteLine(os.Stderr, 30)
+		}
+	}
 }
 
 func setupCmd() *cobra.Command {
@@ -115,6 +128,8 @@ func runSetup(projectRoot string) error {
 		}
 	}
 	mgr = model.NewManager(backend, installRoot, modelName, 0)
+	mgr.SetContextTokens(config.Defaults(projectRoot).Runtime.ContextTokens)
+	mgr.SetThreads(runtimepkg.NumCPU())
 
 	// Step 4: Start server
 	fmt.Println("\nStep 4: Start Model Server")
@@ -345,6 +360,7 @@ func selectSetupModel(ctx context.Context, reader *bufio.Reader, registry setupM
 		printManualModelHelp(errOut, modelName, registry.ModelsDir())
 		return modelName, false, nil
 	}
+	registry.SetProgressFunc(downloadProgress())
 	if err := registry.Download(ctx, modelName); err != nil {
 		return modelName, false, err
 	}

@@ -55,11 +55,13 @@ type RuntimeState struct {
 }
 
 type Manager struct {
-	backend Backend
-	root    string
-	port    int
-	model   string
-	client  *Client
+	backend       Backend
+	root          string
+	port          int
+	model         string
+	contextTokens int
+	threads       int
+	client        *Client
 }
 
 func NewManager(backend Backend, installRoot, model string, port int) *Manager {
@@ -67,11 +69,28 @@ func NewManager(backend Backend, installRoot, model string, port int) *Manager {
 		port = defaultPort(backend)
 	}
 	return &Manager{
-		backend: backend,
-		root:    installRoot,
-		model:   model,
-		port:    port,
-		client:  NewClient(fmt.Sprintf("http://127.0.0.1:%d/v1", port), model),
+		backend:       backend,
+		root:          installRoot,
+		model:         model,
+		port:          port,
+		contextTokens: 32768,
+		client:        NewClient(fmt.Sprintf("http://127.0.0.1:%d/v1", port), model),
+	}
+}
+
+// SetContextTokens overrides the --ctx-size flag used when starting llama.cpp.
+// Values <= 0 are ignored (the built-in default stays in effect).
+func (m *Manager) SetContextTokens(n int) {
+	if n > 0 {
+		m.contextTokens = n
+	}
+}
+
+// SetThreads overrides the --threads flag used when starting llama.cpp.
+// Values <= 0 are ignored and the flag is omitted so llama.cpp auto-detects.
+func (m *Manager) SetThreads(n int) {
+	if n > 0 {
+		m.threads = n
 	}
 }
 
@@ -425,12 +444,16 @@ func (m *Manager) startLlamaCpp() error {
 		return err
 	}
 
-	cmd := exec.Command(m.binaryPath(),
+	cmdArgs := []string{
 		"-m", modelPath,
 		"--host", "127.0.0.1",
 		"--port", fmt.Sprintf("%d", m.port),
-		"--ctx-size", "32768",
-	)
+		"--ctx-size", fmt.Sprintf("%d", m.contextTokens),
+	}
+	if m.threads > 0 {
+		cmdArgs = append(cmdArgs, "--threads", fmt.Sprintf("%d", m.threads))
+	}
+	cmd := exec.Command(m.binaryPath(), cmdArgs...)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	setProcessGroup(cmd)

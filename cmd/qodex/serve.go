@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	runtimepkg "runtime"
 
 	"github.com/benoybose/qodex/internal/config"
 	"github.com/benoybose/qodex/internal/model"
@@ -11,6 +12,8 @@ import (
 
 func serveCmd() *cobra.Command {
 	var port int
+	var ctxTokens int
+	var threads int
 	cmd := &cobra.Command{
 		Use:   "serve <start|stop|status>",
 		Short: "Manage model server lifecycle",
@@ -33,6 +36,14 @@ Run 'qodex setup' to configure the model backend.`,
 				if state, err := mgr.LoadState(); err == nil && state.Port > 0 {
 					mgr = model.NewManager(model.Backend(cfg.Runtime.Backend), installRoot, cfg.Model.Model, state.Port)
 				}
+			}
+			mgr.SetContextTokens(cfg.Runtime.ContextTokens)
+			if ctxTokens > 0 {
+				mgr.SetContextTokens(ctxTokens)
+			}
+			mgr.SetThreads(runtimepkg.NumCPU())
+			if threads > 0 {
+				mgr.SetThreads(threads)
 			}
 			if cfg.Runtime.Backend == string(model.BackendExternal) {
 				switch args[0] {
@@ -87,12 +98,16 @@ Run 'qodex setup' to configure the model backend.`,
 		},
 	}
 	cmd.Flags().IntVarP(&port, "port", "p", 0, "server port (default: 8080 for llama.cpp, 8000 for vLLM/SGLang)")
+	cmd.Flags().IntVar(&ctxTokens, "ctx", 0, "context size in tokens for llama.cpp (default: config runtime.context_tokens)")
+	cmd.Flags().IntVar(&threads, "threads", 0, "CPU threads for llama.cpp (default: number of logical CPUs)")
 	return cmd
 }
 
 func upCmd() *cobra.Command {
 	var port int
-	return &cobra.Command{
+	var ctxTokens int
+	var threads int
+	cmd := &cobra.Command{
 		Use:   "up",
 		Short: "Ensure the managed backend is installed, configured, and running",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -110,9 +125,21 @@ func upCmd() *cobra.Command {
 					mgr = model.NewManager(model.Backend(cfg.Runtime.Backend), installRoot, cfg.Model.Model, state.Port)
 				}
 			}
+			mgr.SetContextTokens(cfg.Runtime.ContextTokens)
+			if ctxTokens > 0 {
+				mgr.SetContextTokens(ctxTokens)
+			}
+			mgr.SetThreads(runtimepkg.NumCPU())
+			if threads > 0 {
+				mgr.SetThreads(threads)
+			}
 			return mgr.EnsureRunning(cmd.Context())
 		},
 	}
+	cmd.Flags().IntVarP(&port, "port", "p", 0, "server port (default: 8080 for llama.cpp, 8000 for vLLM/SGLang)")
+	cmd.Flags().IntVar(&ctxTokens, "ctx", 0, "context size in tokens for llama.cpp (default: config runtime.context_tokens)")
+	cmd.Flags().IntVar(&threads, "threads", 0, "CPU threads for llama.cpp (default: number of logical CPUs)")
+	return cmd
 }
 
 func downCmd() *cobra.Command {
@@ -201,7 +228,7 @@ Models are stored in the Qodex data directory (default ~/.config/qodex/models/).
 				if len(args) < 2 {
 					return fmt.Errorf("model name required for download")
 				}
-				fmt.Printf("Downloading %s...\n", args[1])
+				registry.SetProgressFunc(downloadProgress())
 				return registry.Download(cmd.Context(), args[1])
 			default:
 				return fmt.Errorf("unknown action: %s (use list or download)", args[0])

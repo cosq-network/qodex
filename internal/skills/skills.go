@@ -24,7 +24,18 @@ type Metadata struct {
 	Triggers      []string `toml:"triggers"`
 	AllowedTools  []string `toml:"allowed_tools"`
 	ContextBudget int      `toml:"context_budget"`
+	ContextTokens int      `toml:"context_budget_tokens"` // legacy alias kept for existing skills
 	Scripts       []Script `toml:"scripts"`
+}
+
+// Budget returns the skill's context budget in bytes, honoring the canonical
+// `context_budget` key first and falling back to the legacy
+// `context_budget_tokens` alias. A value of 0 means "no explicit budget".
+func (m Metadata) Budget() int {
+	if m.ContextBudget > 0 {
+		return m.ContextBudget
+	}
+	return m.ContextTokens
 }
 
 type Script struct {
@@ -357,8 +368,8 @@ func Render(skills []Skill, budget int) string {
 	for _, skill := range skills {
 		content := skill.Content
 		skillBudget := budget / len(skills)
-		if skill.Meta.ContextBudget > 0 && skill.Meta.ContextBudget < skillBudget {
-			skillBudget = skill.Meta.ContextBudget
+		if per := skill.Meta.Budget(); per > 0 && per < skillBudget {
+			skillBudget = per
 		}
 		if len(content) > skillBudget {
 			content = truncateUTF8(content, skillBudget)
@@ -490,8 +501,8 @@ func RenderSliced(skills []Skill, prompt string, budget int) string {
 
 	for _, skill := range skills {
 		skillBudget := budget / len(skills)
-		if skill.Meta.ContextBudget > 0 && skill.Meta.ContextBudget < skillBudget {
-			skillBudget = skill.Meta.ContextBudget
+		if per := skill.Meta.Budget(); per > 0 && per < skillBudget {
+			skillBudget = per
 		}
 		if skillBudget <= 0 {
 			continue

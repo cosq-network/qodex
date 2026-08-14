@@ -6,19 +6,23 @@ This roadmap tracks technical activities for Qodex as implementation phases. Sta
 - `in-progress`: partially implemented, usable in limited form, or needing hardening.
 - `planned`: not implemented yet.
 
-This document is a historical implementation roadmap plus a current-state hardening tracker. It is not a guarantee of production readiness. Snapshot: July 16, 2026.
+This document is a historical implementation roadmap plus a current-state hardening tracker. It is not a guarantee of production readiness. Snapshot: August 14, 2026.
 
 ## Current Snapshot
 
 Qodex has a working Go MVP with Cobra CLI commands, a Bubble Tea TUI with streaming token rendering and diff preview, OpenAI-compatible chat completions with SSE streaming support, prompt-based and native tool calling, local tools, local skills, SQLite persistence, session resume with tool history reconstruction, context compaction, session export, review mode, project indexing, LSP-backed navigation tools, and backend capability detection.
 
-As of July 16, 2026, the repo also reflects the following recent hardening work:
+As of August 14, 2026, the repo also reflects the following recent hardening work:
 
 - documented tools such as `run_tests`, `run_formatter`, `review_changes`, `project_index`, and the LSP tools are registered and reachable through the agent
 - tool-schema tests cover these higher-level tools to prevent future registry drift
 - docs have been cleaned up to remove stale planning/checklist material
 - Windows support is documented more accurately: native Windows can run the CLI, but automatic `llama.cpp` setup is not yet supported outside WSL2
 - setup/docs now describe the current model flow more accurately: backend installation is automated on Linux/macOS, while model download is managed through `qodex models download`
+- model downloads are now robust: interrupted transfers resume via HTTP `Range` after comparing local size against a `HEAD`-derived remote size, corrupt or oversized partial files are removed and re-downloaded, and every completed download is validated against the GGUF magic header
+- downloads report live progress in `qodex setup` and `qodex models download`
+- llama.cpp startup is configurable: context size comes from `runtime.context_tokens` and CPU thread count defaults to the machine's logical CPUs, with `--ctx`/`--threads` overrides on `qodex serve start` and `qodex up`
+- skill context budgets accept `context_budget_tokens` as a legacy alias for `context_budget`
 
 ## Phase 0: Foundation MVP
 
@@ -200,7 +204,10 @@ Goal: reduce product risk, close platform/runtime gaps, and improve confidence t
 | completed | Tool schema regression coverage | Testing/Tools | Added tests to ensure key higher-level tools stay registered and visible in `ToolSchemas()`. |
 | completed | Docs cleanup and current-state alignment | Docs | Removed stale planning/checklist docs and updated user/developer/security docs to match the current implementation. |
 | completed | Windows managed-backend clarification | Runtime/Docs | Native Windows now fails with a clearer `llama.cpp` setup message; docs explicitly recommend WSL2 for managed installs. |
-| in-progress | Backend/setup UX hardening | Runtime/UX | The setup wizard still relies on a partial model-management flow and does not fully automate every model acquisition path end-to-end. |
+| completed | Resumable model downloads | Runtime | Partial GGUF downloads resume via HTTP `Range` after comparing the local size against the remote size from a `HEAD` request; corrupt or oversized partial files are removed and re-downloaded. |
+| completed | Model download validation and progress | Runtime/CLI | Completed downloads are validated against the GGUF magic header, and `qodex setup` / `qodex models download` report live transfer progress. |
+| completed | Configurable llama.cpp startup flags | Runtime/CLI | Context size defaults to `runtime.context_tokens` and CPU threads default to the logical CPU count; `qodex serve start` and `qodex up` accept `--ctx` and `--threads` overrides. |
+| in-progress | Backend/setup UX hardening | Runtime/UX | Model acquisition is now fully automated for catalog models (download, resume, validation), but arbitrary user-supplied models still require a manual download path. |
 | in-progress | Platform validation beyond build/test coverage | Runtime/QA | CI and packaging now validate builds across Linux, macOS, and Windows, but native Windows runtime behavior still needs deeper real-world validation beyond current unit/integration coverage. |
 | in-progress | Production readiness hardening | Product/Safety | The core assistant works, but broad production readiness still depends on tighter platform validation, operational polish, and continued reduction of docs/code drift. |
 

@@ -8,19 +8,170 @@ The intended runtime is `llama.cpp`, and Qodex manages backend installation and 
 
 The repository includes a fully featured coding agent with:
 
-- Cobra CLI commands: `init`, `config`, `chat`, `run`, `review`, `doctor`, `setup`, `reset`, `serve`, `models`, `skills list`, `skills show`, `sessions list`, `sessions resume`, `sessions export`, `version`, and `completion`.
+- Cobra CLI commands: `setup`, `init`, `config`, `chat`, `run`, `review`, `doctor`, `skills`, `sessions`, `serve`, `up`, `down`, `status`, `models`, `reset`, `version`, and `completion`.
 - Bubble Tea terminal chat UI with streaming token rendering, inline diff preview, spinner, error panel, and multi-line input with `@` file autocomplete.
 - OpenAI-compatible `/v1/chat/completions` client with SSE streaming and capability detection.
 - Prompt-based JSON tool calling with validation repair loop and optional native OpenAI `tools`/`tool_calls` support.
-- Built-in tools: `list_files`, `read_file`, `search_text`, `write_file`, `write_patch`, `run_command`, `run_script` (pre-approved skill scripts), `run_tests`, `run_formatter`, `review_changes`, `project_index`, `lsp_diagnostics`, `lsp_definition`, `lsp_find_references`, `git_status`, `git_diff`, `git_log`, `cmake_configure`, `cmake_build`, `clang_format`, `clang_tidy`, `make_build`, `nmake_build`, `curl`, `wget`, `javac_compile`, `java_run`, `rg_search`, `sed_edit`, `base64_encode`, `node_run`, `npm_command`, `npx_command`, `nvm_use`, `dotnet_run`, `dotnet_build`, `dotnet_test`, `msbuild`, `nuget_restore`, `nuget_install`, `winget_install`, `choco_install`, `apt_install`, `apt_get_install`, `snap_install`, `dnf_install`, `brew_install`, `python_run`, `python3_run`, `pip_install`, `pip3_install`, `conda_install`, `conda_create`, `flutter_run`, `flutter_build`, `flutter_test`, `dart_run`, `dart_analyze`, `dart_format`, `pub_get`, `pub_upgrade`, `pub_add`, `pub_remove`, `ar_create`, `ar_extract`, `ar_list`, `tar_create`, `tar_extract`, `tar_list`, `zip_create`, `zip_extract`, `zip_list`, `grep_search`, `find_files`, `tail_file`, `awk_process`, `ps_list`, `chmod_change`, `chown_change`, `user_add`, `user_del`, `docker_build`, `docker_run`, `docker_compose_up`, `docker_compose_down`, `qemu_run`, `adb_devices`, `adb_shell`, `adb_push`, `adb_pull`.
-- Built-in skills shipped with Qodex for project conventions, go-testing, git, cmake, clang, make, curl, wget, java, rg, sed, base64, node, npm, npx, nvm, dotnet, nuget, msbuild, nmake, system-packages, python, pip, conda, flutter, dart, archives, system-admin, docker, qemu, adb, and more.
-- Skill system: `skill.toml` metadata (triggers, allowed_tools, context_budget, scripts), model-assisted skill routing (`agent.skill_routing`), keyword/heuristic selection, section-aware context slicing, and pre-approved script policy with provenance tracking.
+- 90 built-in tools covering file/symbol search, LSP code intelligence, Git, CMake/clang/make/.NET/Java toolchains, package managers, language runtimes, archives, Docker/QEMU, ADB, and system administration.
+- 31 built-in skills shipped with Qodex covering project conventions, git, go-testing, cmake, clang, make, curl, wget, java, rg, sed, base64, node, npm, npx, nvm, dotnet, nuget, msbuild, nmake, system packages, python, pip, conda, flutter, dart, archives, system admin, docker, qemu, and adb.
+- Skill system: `skill.toml` metadata (triggers, allowed_tools, context_budget, scripts), model-assisted or heuristic skill routing (`agent.skill_routing`), section-aware context slicing, and pre-approved script policy with provenance tracking.
 - SQLite session/tool event storage with WAL mode, migrations, and approval persistence.
-- Session resume with full tool history reconstruction (TUI and non-interactive via `--session`).
+- Session resume with full tool history reconstruction (TUI via `sessions resume`, non-interactive via `run --session`), plus JSON export.
 - Approval gates for write, shell, and network tools with inline diff preview and `--yes` auto-approval.
-- Planning state tracking (current task, inspected files, actions taken) in system prompt.
-- Context compaction (keeps last 8 messages when approaching token limit).
+- Planning state tracking (current task, inspected files, actions taken) in the system prompt.
+- Context compaction (keeps the last 8 messages when approaching the token limit).
 - LCS-based unified diff generation for write tool previews.
+- LSP integration (`gopls`, `pyright`, `typescript-language-server`, `rust-analyzer`) for diagnostics, definitions, and references.
+- Managed model server lifecycle: install the backend, download GGUF models, and start/stop/status the server from the CLI. Downloads resume interrupted transfers, report live progress, and validate the GGUF header. llama.cpp starts with the configured context size and CPU thread count.
+
+## CLI Reference
+
+`qodex` run without arguments prints help if configuration exists, otherwise launches the interactive setup prompt.
+
+Global flags (available on every command):
+
+| Flag | Description |
+|------|-------------|
+| `--config string` | Config file path (overrides discovery) |
+| `-y, --yes` | Auto-approve write and shell tools |
+| `--debug string` | Write diagnostics to this file |
+| `-h, --help` | Help for any command |
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `setup` | Interactive first-time setup wizard: choose a backend (llama.cpp, vLLM, SGLang, or external), install it, pick/download a model, start the server, and write `.qodex/config.toml` |
+| `init` | Create project-local configuration and a starter skill (`--force` overwrites) |
+| `config list` | Print the effective configuration as `key=value` |
+| `config get KEY` | Print one effective configuration value |
+| `config set KEY VALUE` | Set one project-local configuration value |
+| `chat` | Start the terminal chat UI (alt-screen, streaming, inline approvals) |
+| `run PROMPT` | Run a one-shot agent prompt; `--session ID` resumes an existing session |
+| `review` | Analyze uncommitted git changes and produce a structured code review |
+| `doctor` | Check configuration and local model connectivity (backend install, model file, server, live endpoint probe) |
+| `skills list` | List discovered skills as `name<TAB>path` |
+| `skills show NAME` | Print a skill's content |
+| `sessions list` | List recent sessions |
+| `sessions resume ID` | Resume a session in the terminal chat UI |
+| `sessions export ID` | Export session data as JSON |
+| `serve start` | Ensure the managed backend is running (`-p/--port` overrides the port; `--ctx` and `--threads` override llama.cpp context size and CPU threads) |
+| `serve stop` | Stop the managed backend |
+| `serve status` | Show backend running state, PID, port, model, and install status |
+| `up` | One-shot: ensure the managed backend is installed, configured, and running (accepts `--port`, `--ctx`, and `--threads` like `serve start`) |
+| `down` | One-shot: stop the managed backend if running |
+| `status` | Compact backend status (running state, PID, port, model) |
+| `models list` | List known models and downloaded status |
+| `models download NAME` | Download a GGUF model into `~/.config/qodex/models/` (resumes partial files and validates the GGUF header) |
+| `reset` | Remove Qodex state, config, and cached data (`--force` skips confirmation, `--all` also removes `~/.config/qodex`) |
+| `version` | Print version, commit, and build date |
+| `completion SHELL` | Generate shell completion scripts (`bash`, `zsh`, `fish`, `powershell`) |
+
+## Configuration
+
+Configuration is TOML, discovered in this order (later wins):
+
+1. `~/.config/qodex/config.toml` — user config
+2. `<project>/.qodex/config.toml` — project config
+3. An explicit `--config PATH` — loads only that file
+
+Unknown keys are rejected, and a project file inherits anything not set from user config and defaults. Use `qodex config list` to inspect the effective configuration and `qodex config set KEY VALUE` to update the project config.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `model.provider` | `openai-compatible` | Provider identifier (must be `openai-compatible`) |
+| `model.base_url` | `http://127.0.0.1:8080/v1` | OpenAI-compatible base URL |
+| `model.model` | `qwen2.5-coder` | Model name sent to the endpoint |
+| `runtime.backend` | `llama.cpp` | Managed backend: `llama.cpp`, `vllm`, `sglang`, or `external` |
+| `runtime.context_tokens` | `32768` | Context window; context compaction triggers at 70% |
+| `runtime.temperature` | `0.2` | Sampling temperature (0–2) |
+| `runtime.top_p` | `0.95` | Nucleus sampling (0–1) |
+| `approval.auto_approve` | `false` | Auto-approve all write/shell/network actions (same as `--yes`) |
+| `approval.write_files` | `ask` | Policy for write tools: `ask`, `allow`, or `deny` |
+| `approval.run_commands` | `ask` | Policy for shell tools: `ask`, `allow`, or `deny` |
+| `approval.network` | `ask` | Policy for network tools: `ask`, `allow`, or `deny` |
+| `store.path` | `.qodex/qodex.db` | SQLite database path |
+| `agent.max_steps` | `12` | Max agent loop iterations |
+| `agent.skill_routing` | `auto` | Skill selection: `auto` (heuristic) or `model` (model-assisted with heuristic fallback) |
+| `agent.tool_calls` | `prompt` | Tool-call mechanism: `prompt` (inline JSON) or `native` (OpenAI `tools`/`tool_calls`; streaming disabled) |
+
+Example configs are in [`examples/`](examples/).
+
+## Built-in Tools
+
+90 tools are registered and categorized by effect, which drives the approval policy:
+
+| Effect | Policy | Count |
+|--------|--------|-------|
+| `read` | Auto-approved | 20 |
+| `write` | Per `approval.write_files` | 3 |
+| `shell` | Per `approval.run_commands` | 49 |
+| `network` | Per `approval.network` | 15 |
+| `destructive` | Always denied | 3 |
+
+### Read (auto-approved)
+
+`list_files`, `read_file`, `search_text`, `rg_search`, `grep_search`, `find_files`, `tail_file`, `ps_list`, `git_status`, `git_diff`, `git_log`, `review_changes`, `project_index`, `lsp_diagnostics`, `lsp_definition`, `lsp_find_references`, `ar_list`, `tar_list`, `zip_list`, `adb_devices`
+
+### Write
+
+`write_file`, `write_patch`, `sed_edit`
+
+### Shell
+
+`run_command`, `run_script`, `run_tests`, `run_formatter`, `cmake_configure`, `cmake_build`, `clang_format`, `clang_tidy`, `make_build`, `nmake_build`, `javac_compile`, `java_run`, `node_run`, `npm_command`, `nvm_use`, `dotnet_run`, `dotnet_build`, `dotnet_test`, `msbuild`, `python_run`, `python3_run`, `conda_create`, `flutter_run`, `flutter_build`, `flutter_test`, `dart_run`, `dart_analyze`, `dart_format`, `pub_add`, `pub_remove`, `ar_create`, `ar_extract`, `tar_create`, `tar_extract`, `zip_create`, `zip_extract`, `awk_process`, `base64_encode`, `chmod_change`, `docker_build`, `docker_run`, `docker_compose_up`, `docker_compose_down`, `qemu_run`, `adb_shell`, `adb_push`, `adb_pull`, `apt_install`, `apt_get_install`
+
+### Network
+
+`curl`, `wget`, `npx_command`, `nuget_restore`, `nuget_install`, `winget_install`, `choco_install`, `snap_install`, `dnf_install`, `brew_install`, `pip_install`, `pip3_install`, `conda_install`, `pub_get`, `pub_upgrade`
+
+### Destructive (denied by policy)
+
+`chown_change`, `user_add`, `user_del`
+
+Tool results are returned as JSON (`ok`, `summary`, `content`, `metadata`), capped at 20,000 characters; large outputs are stored as artifacts in SQLite and referenced by short IDs. `run_command` defaults to a 120s timeout (max 300s) and kills the process on timeout. `run_script` executes scripts defined in active skill `skill.toml` files with provenance recorded.
+
+## Approval Gates
+
+Every tool carries an effect (`read`, `write`, `shell`, `network`, or `destructive`) that selects the policy:
+
+- **Read** tools run without prompting.
+- **Write, shell, and network** tools prompt unless the policy is `allow` (`approval.auto_approve = true` or `--yes`) or `deny`.
+- **Destructive** tools (`user_add`, `user_del`, `chown_change`) are always denied by policy.
+
+Approval requests show a summary and, for writes, an inline LCS-based unified diff preview. In chat mode the TUI prompts inline with `y`/`n` and a 30s timeout; `run`/`review` prompt on stdin. Shell commands are inspected at runtime and reclassified as `network` when they look network-related (curl/wget/ssh/scp/rsync, `git clone/pull/fetch`, `go get`, package installers), making network approvals explicit. Safety checks reject absolute/escaping paths, dangerous shell commands (e.g. `rm -rf /`, `curl | sh`), and destructive `argv` patterns. See the [Security Model](docs/security-model.md).
+
+## Skills
+
+31 skills are compiled into the binary and overridable from `<project>/.qodex/skills/` and `~/.config/qodex/skills/`:
+
+`adb`, `archives`, `base64`, `clang`, `cmake`, `conda`, `curl`, `dart`, `docker`, `dotnet`, `flutter`, `git`, `go-testing`, `java`, `make`, `msbuild`, `nmake`, `node`, `npm`, `npx`, `nuget`, `nvm`, `pip`, `project`, `python`, `qemu`, `rg`, `sed`, `system-admin`, `system-packages`, `wget`
+
+Each skill is a directory with a `SKILL.md` plus a `skill.toml` declaring `name`, `description`, `version`, `triggers`, `allowed_tools`, and optional `scripts` (pre-approved shell snippets executed through `run_script` with `skill:<name>/script:<desc>` provenance). Skill context budgets use the `context_budget` key, with `context_budget_tokens` accepted as a legacy alias. The `project` skill is always loaded first. Routing selects up to 3 skills heuristically (keyword/trigger matching, plus explicit `/skill <name>` prompts) or up to 2 via the model when `agent.skill_routing = "model"`. Skills are instructions, not authority — they cannot bypass validation or approval policy.
+
+## Agent Loop
+
+- **Planning state** tracks the current task, files inspected, and actions taken; it is injected into the system prompt and consumed by the step budget alongside `max_steps`.
+- **Context compaction** estimates token usage before each step and, above 70% of `runtime.context_tokens`, keeps the system prompt plus the last 8 messages with a "compacted" note.
+- **Tool calling** runs in one of two modes: `prompt` (default) parses inline JSON `{"tool_call": ...}` emitted by the model with a validation/repair loop; `native` sends an OpenAI `tools`/`tool_calls` schema (streaming disabled).
+- **Streaming** renders tokens as they arrive via SSE when capability detection confirms the endpoint supports it.
+
+## Sessions and Storage
+
+Sessions are persisted in a SQLite database (WAL mode, `busy_timeout=5000`, pure Go via `modernc.org/sqlite`). The schema covers `sessions`, `messages`, `tool_calls`, `tool_results`, `approvals`, and `output_artifacts` (large tool outputs). Every tool call, result, and approval decision is stored for auditability. Resume a session with `qodex sessions resume ID` (TUI) or `qodex run "..." --session ID`, and export any session as JSON with `qodex sessions export ID`.
+
+## LSP Integration
+
+`lsp_diagnostics`, `lsp_definition`, and `lsp_find_references` use a JSON-RPC client over stdio to talk to language servers per file type:
+
+| Language | Server |
+|----------|--------|
+| Go | `gopls` |
+| Python | `pyright-langserver --stdio` |
+| JavaScript / TypeScript | `typescript-language-server --stdio` |
+| Rust | `rust-analyzer` |
+
+If a server is not installed, the tool returns installation instructions.
 
 ## Goals
 
@@ -43,14 +194,15 @@ The repository includes a fully featured coding agent with:
 
 ## Documentation
 
+- [User Guide](docs/user-guide.md)
 - [Developer Guide](docs/developer-guide.md)
 - [Tool Calling And Skills](docs/tool-calling-and-skills.md)
-- [User Guide](docs/user-guide.md)
 - [Security Model](docs/security-model.md)
-- [Roadmap](docs/roadmap.md)
 - [llama.cpp Setup Guide](docs/llama-cpp-setup.md)
 - [GitHub Release Pipeline Setup](docs/github-release-setup.md)
+- [GPG Signing](docs/gpg-signing.md)
 - [Release Management](docs/release-management.md)
+- [Roadmap](docs/roadmap.md)
 - [Example Configs](examples/)
 
 ## Recommended Initial Stack
@@ -246,8 +398,10 @@ The CLI should treat this as an OpenAI-compatible base URL and should not requir
 ./qodex setup
 ./qodex doctor
 ./qodex config list
+./qodex status
 ./qodex run "Explain this repository structure"
 ./qodex chat
+./qodex review
 ./qodex serve status
 ./qodex models list
 ./qodex sessions list
@@ -259,10 +413,10 @@ The CLI should treat this as an OpenAI-compatible base URL and should not requir
 ```
 
 Run `qodex` without arguments for the first time to trigger the interactive setup wizard, which will:
-1. Choose a backend (llama.cpp, vLLM, or SGLang)
+1. Choose a backend (llama.cpp, vLLM, SGLang, or an external endpoint)
 2. Install the backend automatically
 3. Select a model from the known list or enter one manually
-4. Download the model with `qodex models download <model-name>` or place it in the models directory if it is not already present
+4. Download the model with `qodex models download <model-name>` (progress is reported live, and interrupted downloads resume from where they stopped) or place it in the models directory if it is not already present
 5. Start the model server
 6. Create project configuration
 

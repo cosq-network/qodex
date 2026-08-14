@@ -771,6 +771,7 @@ func maybeEnsureManagedBackend(cfg *config.Config) error {
 	if state, err := mgr.LoadState(); err == nil && state.Port > 0 {
 		mgr = model.NewManager(model.Backend(cfg.Runtime.Backend), installRoot, cfg.Model.Model, state.Port)
 	}
+	mgr.SetContextTokens(cfg.Runtime.ContextTokens)
 	diag := mgr.Diagnostics(ctx)
 	if !diag.BackendInstalled && !diag.ModelPresent {
 		return nil

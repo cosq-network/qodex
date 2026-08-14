@@ -44,6 +44,8 @@ func (f *fakeSetupRegistry) IsDownloaded(name string) bool {
 	return f.downloaded[name]
 }
 
+func (f *fakeSetupRegistry) SetProgressFunc(_ model.ProgressFunc) {}
+
 func TestSelectSetupModelDownloadsChosenModel(t *testing.T) {
 	reg := &fakeSetupRegistry{
 		models: []model.ModelInfo{
