@@ -1,4 +1,4 @@
-VERSION ?= $(shell git describe --tags --dirty --always --match 'v*' 2>/dev/null | sed 's/^v//' || echo "dev")
+VERSION ?= $(shell version="$$(git describe --tags --dirty --match 'v*' 2>/dev/null || true)"; if [ -n "$$version" ]; then printf '%s' "$$version" | sed 's/^v//'; else printf 'dev-%s' "$$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"; fi)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
 LDFLAGS := -ldflags="-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)"

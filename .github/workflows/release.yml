@@ -5,7 +5,11 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: qodex-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   verify:
@@ -20,6 +24,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -31,6 +37,25 @@ jobs:
           CGO_ENABLED: 0
         run: go build -v -ldflags="-X main.version=${GITHUB_REF_NAME#v} -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" ./cmd/qodex
 
+      - name: Validate release tag and version
+        run: |
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must use semantic versioning: vMAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          git fetch origin main --no-tags
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "Release tag does not point to a commit reachable from main"
+            exit 1
+          fi
+          expected="${GITHUB_REF_NAME#v}"
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then binary="./qodex.exe"; else binary="./qodex"; fi
+          actual="$(${binary} version | awk '/^qodex version / {print $3}')"
+          if [[ "${actual}" != "${expected}" ]]; then
+            echo "Binary version ${actual} does not match tag ${expected}"
+            exit 1
+          fi
+
       - name: Vet
         run: go vet ./...
 
@@ -41,6 +66,8 @@ jobs:
     name: Publish release
     needs: verify
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     defaults:
       run:
         shell: bash
@@ -58,9 +85,10 @@ jobs:
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
-          if [[ -z "${GPG_PRIVATE_KEY}" || -z "${GPG_FINGERPRINT}" ]]; then
-            echo "GPG_PRIVATE_KEY and GPG_FINGERPRINT must be configured for public signed releases."
+          if [[ -z "${GPG_PRIVATE_KEY}" || -z "${GPG_FINGERPRINT}" || -z "${GPG_PASSPHRASE}" ]]; then
+            echo "GPG_PRIVATE_KEY, GPG_FINGERPRINT, and GPG_PASSPHRASE must be configured for public signed releases."
             exit 1
           fi
 
@@ -68,7 +96,7 @@ jobs:
         uses: crazy-max/ghaction-import-gpg@v6
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
-          passphrase: ""
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
           fingerprint: ${{ secrets.GPG_FINGERPRINT }}
 
       - name: Export public signing key
@@ -77,14 +105,25 @@ jobs:
           GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
 
       - name: GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@9c156ee8a17a598857849441385a2041ef570552 # v6.3.0
         with:
           distribution: goreleaser
-          version: latest
+          version: v2.8.2
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
+
+      - name: Verify release checksums and signatures
+        run: |
+          test -s dist/checksums.txt
+          while read -r checksum artifact; do
+            echo "${checksum}  dist/${artifact}" | sha256sum --check --status -
+          done < dist/checksums.txt
+          for signature in dist/*.sig; do
+            artifact="${signature%.sig}"
+            gpg --verify "${signature}" "${artifact}"
+          done
 
       - name: Upload public signing key
         uses: softprops/action-gh-release@v2

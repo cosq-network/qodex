@@ -12,6 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/benoybose/qodex/internal/config"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -229,10 +230,7 @@ func Discover(projectRoot string) ([]Skill, error) {
 	}
 
 	var roots []string
-	home, _ := os.UserHomeDir()
-	if home != "" {
-		roots = append(roots, filepath.Join(home, ".config", "qodex", "skills"))
-	}
+	roots = append(roots, filepath.Join(config.UserConfigDir(), "skills"))
 	roots = append(roots, filepath.Join(projectRoot, ".qodex", "skills"))
 
 	byName := map[string]Skill{}

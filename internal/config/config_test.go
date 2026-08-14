@@ -124,6 +124,15 @@ func TestDefaultsIncludeSkillRouting(t *testing.T) {
 	}
 }
 
+func TestUserConfigDirHonorsOverride(t *testing.T) {
+	want := filepath.Join(t.TempDir(), "portable-config")
+	t.Setenv("QODEX_CONFIG_HOME", want)
+	got := UserConfigDir()
+	if got != want {
+		t.Fatalf("UserConfigDir() = %q, want %q", got, want)
+	}
+}
+
 func TestValidateAcceptsSkillRoutingAuto(t *testing.T) {
 	cfg := Defaults("/test")
 	cfg.Agent.SkillRouting = "auto"

@@ -33,6 +33,7 @@ The release CI workflow reads these secrets from the repository:
 |---|---|
 | `GPG_PRIVATE_KEY` | ASCII-armored GPG private key (exported with `gpg --export-secret-keys --armor`) |
 | `GPG_FINGERPRINT` | The fingerprint of the key (e.g. `A1B2C3D4E5F6G7H8`) |
+| `GPG_PASSPHRASE` | Passphrase for the protected signing key |
 | `RELEASE_PLEASE_TOKEN` | Personal access token used by Release Please so created tags trigger the release workflow; it must also be able to create refs for commits that touch workflow files |
 | `GITHUB_TOKEN` | Automatically provided by GitHub Actions |
 
@@ -45,6 +46,8 @@ Qodex follows [Semantic Versioning](https://semver.org/) and uses [Release Pleas
 - Merged conventional commits on `main` update the release PR and `CHANGELOG.md`.
 - Merging the release PR creates the git tag that triggers `.github/workflows/release.yml`.
 - `RELEASE_PLEASE_TOKEN` should be a fine-grained or classic token with permission to create pull requests, create refs, and create tags in this repository.
+- The release workflow accepts only `vMAJOR.MINOR.PATCH` tags whose commits are reachable from `main`.
+- CI linter and GoReleaser versions are pinned; GoReleaser uses `go mod download` rather than mutating module files during packaging.
 - Fine-grained PATs should include `Contents: Read and write`, `Pull requests: Read and write`, `Workflows: Read and write`, and `Metadata: Read`.
 - Classic PATs should include `repo` and `workflow`.
 
@@ -165,7 +168,7 @@ The release workflow validates the secrets first, then imports the GPG key befor
   uses: crazy-max/ghaction-import-gpg@v6
   with:
     gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
-    passphrase: ""
+    passphrase: ${{ secrets.GPG_PASSPHRASE }}
 ```
 
 This is required for the `signs` section in `.goreleaser.yaml` to work.
@@ -180,7 +183,7 @@ signs:
 ```
 
 - `artifacts: all` signs every binary, archive, and checksum.
-- `--batch` prevents GPG from prompting for a passphrase (not needed for CI keys).
+- `GPG_PASSPHRASE` is stored as a separate repository secret and prevents the signing key from being usable with key material alone.
 - The `GPG_FINGERPRINT` env var is set from the secret.
 
 ## Rollback

@@ -9,15 +9,15 @@ The intended runtime is `llama.cpp`, and Qodex manages backend installation and 
 The repository includes a fully featured coding agent with:
 
 - Cobra CLI commands: `setup`, `init`, `config`, `chat`, `run`, `review`, `doctor`, `skills`, `sessions`, `serve`, `up`, `down`, `status`, `models`, `reset`, `version`, and `completion`.
-- Bubble Tea terminal chat UI with streaming token rendering, inline diff preview, spinner, error panel, responsive sizing, framed multi-line input, `@` file autocomplete, and `/` command autocomplete.
+- Bubble Tea terminal chat UI with streaming token rendering, inline diff preview, spinner, error panel, responsive sizing, framed multi-line input, `@` file autocomplete, `/` command autocomplete, transcript search/navigation, clipboard copy, collapsible tool details, a searchable command palette, and live task progress.
 - OpenAI-compatible `/v1/chat/completions` client with SSE streaming and capability detection.
 - Prompt-based JSON tool calling with validation repair loop and optional native OpenAI `tools`/`tool_calls` support.
 - 98 built-in tools covering file/symbol search, LSP code intelligence, Git workflows, CMake/clang/make/.NET/Java toolchains, package managers, language runtimes, archives, Docker/QEMU, ADB, and system administration.
 - 31 built-in skills shipped with Qodex covering project conventions, git, go-testing, cmake, clang, make, curl, wget, java, rg, sed, base64, node, npm, npx, nvm, dotnet, nuget, msbuild, nmake, system packages, python, pip, conda, flutter, dart, archives, system admin, docker, qemu, and adb.
 - Skill system: `skill.toml` metadata (triggers, allowed_tools, context_budget, scripts), model-assisted or heuristic skill routing (`agent.skill_routing`), section-aware context slicing, and pre-approved script policy with provenance tracking.
 - SQLite session/tool event storage with WAL mode, migrations, and approval persistence.
-- Session resume with full tool history reconstruction (TUI via `sessions resume`, non-interactive via `run --session`), plus JSON export.
-- Approval gates for write, shell, and network tools with inline diff preview and `--yes` auto-approval.
+- Session resume with full tool history reconstruction (TUI via `sessions resume`, non-interactive via `run --session`), CLI JSON export, and TUI session export to the clipboard.
+- Approval gates for write, shell, and network tools with risk and affected-file summaries, compact/expandable diffs, once/session/always approval scopes, timeout countdowns, audit events, and `--yes` auto-approval.
 - MCP client support for stdio and Streamable HTTP: configured MCP servers contribute namespaced tools while retaining Qodex approval and audit behavior; `qodex mcp doctor` checks installation, environment-backed authentication, protocol health, server capabilities, and tool discovery.
 - Interoperable repository instructions from `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, Cursor rules, and GitHub Copilot instructions.
 - Planning state tracking (current task, inspected files, actions taken) in the system prompt.
@@ -68,7 +68,7 @@ Global flags (available on every command):
 | `down` | One-shot: stop the managed backend if running |
 | `status` | Compact backend status (running state, PID, port, model) |
 | `models list` | List known models and downloaded status |
-| `models download NAME` | Download a GGUF model into `~/.config/qodex/models/` (resumes partial files and validates the GGUF header) |
+| `models download NAME` | Download a GGUF model into the platform user data directory (resumes partial files and validates the GGUF header) |
 | `reset` | Remove Qodex state, config, and cached data (`--force` skips confirmation, `--all` also removes `~/.config/qodex`) |
 | `version` | Print version, commit, and build date |
 | `completion SHELL` | Generate shell completion scripts (`bash`, `zsh`, `fish`, `powershell`) |
@@ -147,7 +147,7 @@ Every tool carries an effect (`read`, `write`, `shell`, `network`, or `destructi
 - **Write, shell, and network** tools prompt unless the policy is `allow` (`approval.auto_approve = true` or `--yes`) or `deny`.
 - **Destructive** tools (`user_add`, `user_del`, `chown_change`) are always denied by policy.
 
-Approval requests show a summary and, for writes, an inline LCS-based unified diff preview. In chat mode the TUI prompts inline with `y`/`n` and a 30s timeout; `run`/`review` prompt on stdin. Shell commands are inspected at runtime and reclassified as `network` when they look network-related (curl/wget/ssh/scp/rsync, `git clone/pull/fetch`, `go get`, package installers), making network approvals explicit. Safety checks reject absolute/escaping paths, dangerous shell commands (e.g. `rm -rf /`, `curl | sh`), and destructive `argv` patterns. See the [Security Model](docs/security-model.md).
+Approval requests show a summary and, for writes, an inline LCS-based unified diff preview. In chat mode the TUI prompts inline for write, shell, and network approvals unless `--yes` is set. Use `y` or `1` to approve once, `2` to approve for the session, `3` to always approve the tool for the session, and `n` to deny; approval decisions are recorded in the session audit stream. `run`/`review` prompt on stdin. Shell commands are inspected at runtime and reclassified as `network` when they look network-related (curl/wget/ssh/scp/rsync, `git clone/pull/fetch`, `go get`, package installers), making network approvals explicit. Safety checks reject absolute/escaping paths, dangerous shell commands (e.g. `rm -rf /`, `curl | sh`), and destructive `argv` patterns. See the [Security Model](docs/security-model.md).
 
 ## Skills
 
@@ -166,9 +166,11 @@ Each skill is a directory with a `SKILL.md` plus a `skill.toml` declaring `name`
 
 ### TUI slash commands
 
-The interactive TUI provides `/help`, `/skills [FILTER]`, `/plan`, and `/compact` for local help, skill discovery, planning state, and context management. `/mcp [NAME]` runs MCP diagnostics. `/commit [MESSAGE]` and `/undo [COMMIT]` ask the agent to perform focused Git operations through the normal approval and audit workflow. Existing `/skill <name>` prompts remain supported for explicit skill routing.
+The interactive TUI provides `/help`, `/model`, `/session`, `/clear`, `/export`, `/theme`, `/settings`, `/jump [CATEGORY]`, `/skills [FILTER]`, `/plan`, `/compact`, and `/mcp [NAME]`. `/commit [MESSAGE]` and `/undo [COMMIT]` ask the agent to perform focused Git operations through the normal approval and audit workflow. Existing `/skill <name>` prompts remain supported for explicit skill routing.
 
-The TUI is designed for long-running coding sessions: the viewport and input resize with the terminal, active work shows a contextual status label, approval prompts provide explicit keyboard guidance, `Esc` cancels the current interaction without quitting, and tool events use compact status markers for quick scanning. Use `Ctrl+J` for a newline in the composer.
+`/jump` accepts `user`, `tool`, `approval`, or `error`. `/export` copies the current session as formatted JSON to the clipboard. Use `Ctrl+P` for the searchable command palette, `Ctrl+F` to search the transcript, `Ctrl+N` for the next match, `Ctrl+Y` to copy selected output, and `Ctrl+O` to collapse or expand verbose tool details.
+
+The TUI is designed for long-running coding sessions: the viewport and input resize with the terminal, active work shows the current task, skill, tool, inspected-file count, step count, elapsed time, context usage, and compaction warnings. Approval prompts provide explicit keyboard guidance, `Esc` cancels the current interaction without quitting, and tool events use compact status markers for quick scanning. Use `Ctrl+J` for a newline in the composer.
 
 ## Sessions and Storage
 
@@ -281,7 +283,7 @@ Display:   True-color terminal (WezTerm, Kitty, Alacritty, iTerm2, Windows Termi
 
 - **OS**: Windows 10 22H2+ or Windows 11.
 - **WSL2**: recommended for managed llama.cpp installs and best compatibility with Python-based backends.
-- **Native**: `qodex` runs natively, but automatic llama.cpp setup is not available yet. Use a manually managed OpenAI-compatible endpoint if you stay outside WSL2.
+- **Native**: `qodex` runs natively, but automatic llama.cpp setup is not available yet. Use a manually managed OpenAI-compatible endpoint if you stay outside WSL2. The native CLI/TUI uses `cmd.exe` for shell execution, and explicitly Unix-only tools such as `nvm_use` report actionable unsupported-platform errors.
 - **Terminal**: Windows Terminal with a Nerd Font for the best TUI experience.
 
 ### Memory Sizing By Model
@@ -308,6 +310,8 @@ Qodex supports Linux, macOS, and Windows. The CLI, agent loop, and SQLite storag
 | TTY detection | `isatty` | `isatty` (via `go-isatty`) |
 | Symlinks in archives | extracted | skipped (requires elevated privilege) |
 | File modes | `0o755` / `0o644` | mapped to `0o666` for broad access |
+
+User configuration and managed model data use the platform's native user configuration directory (`$XDG_CONFIG_HOME/qodex` or `~/.config/qodex` on Unix; `%APPDATA%\\qodex` on Windows). Set `QODEX_CONFIG_HOME` to use a portable or test-specific location. Project configuration remains under `<project>/.qodex/` on every platform.
 
 No CGO is required. `CGO_ENABLED=0` builds are supported and tested.
 

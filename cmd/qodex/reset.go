@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/benoybose/qodex/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -44,11 +45,7 @@ func runReset(force, all bool) error {
 	hasGlobal := false
 	var globalDir string
 	if all {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		globalDir = filepath.Join(home, ".config", "qodex")
+		globalDir = config.UserConfigDir()
 		hasGlobal = dirExists(globalDir)
 	}
 

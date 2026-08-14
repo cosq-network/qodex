@@ -10,7 +10,7 @@ Signing attaches a detached `.sig` to every release artifact so users can verify
 
 ## How this project uses signing now
 
-- Public tag releases require `GPG_PRIVATE_KEY` and `GPG_FINGERPRINT` GitHub Actions secrets.
+- Public tag releases require `GPG_PRIVATE_KEY`, `GPG_FINGERPRINT`, and `GPG_PASSPHRASE` GitHub Actions secrets.
 - The release workflow imports the private key, runs GoReleaser, signs every published artifact, and uploads `gpg-public-key.asc` to the GitHub Release.
 - Development builds and snapshot packaging do not require GPG.
 
@@ -21,7 +21,7 @@ Signing attaches a detached `.sig` to every release artifact so users can verify
   - Ubuntu: `sudo apt-get install gnupg2`
   - Windows: WSL or Git Bash
 - A GitHub repository with Actions enabled
-- Optional but recommended: an empty passphrase for CI key import
+- A passphrase-protected key and a separate `GPG_PASSPHRASE` GitHub Actions secret
 
 ## Step 1: create a key
 
@@ -33,7 +33,7 @@ Choose:
 - (9) ECC / (1) Curve 25519
 - Signing only
 - Name and email you already use with GitHub
-- Empty passphrase to match `passphrase: ""` in the release workflow
+- A strong passphrase; store it as the `GPG_PASSPHRASE` GitHub Actions secret
 
 ## Step 2: get the fingerprint
 

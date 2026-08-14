@@ -72,9 +72,7 @@ Recommended choices:
 - name: your maintainer name
 - email: the email you use with GitHub
 
-For this repository’s current workflow, the simplest path is an empty passphrase because `.github/workflows/release.yml` imports the key with `passphrase: ""`.
-
-If you want a passphrase-protected CI key later, the workflow will need to be updated to pass and use that secret explicitly.
+The release workflow requires a passphrase-protected signing key. Store the private key, fingerprint, and passphrase separately as `GPG_PRIVATE_KEY`, `GPG_FINGERPRINT`, and `GPG_PASSPHRASE` repository secrets.
 
 ## 3. Get the fingerprint and key ID
 
@@ -303,7 +301,7 @@ Check:
 
 - `GPG_PRIVATE_KEY` is valid ASCII-armored private key material
 - `GPG_FINGERPRINT` matches the imported private key
-- the exported private key was not passphrase-protected unless the workflow is updated for passphrase support
+- `GPG_PASSPHRASE` is configured and matches the passphrase used when the private key was exported
 
 ### Windows installer download fails
 

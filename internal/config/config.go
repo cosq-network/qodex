@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -131,13 +132,32 @@ func Defaults(projectRoot string) Config {
 	}
 }
 
+// UserConfigDir returns Qodex's platform-appropriate user configuration
+// directory. QODEX_CONFIG_HOME is useful for portable installs and tests;
+// Unix systems honor XDG_CONFIG_HOME through os.UserConfigDir.
+func UserConfigDir() string {
+	if override := strings.TrimSpace(os.Getenv("QODEX_CONFIG_HOME")); override != "" {
+		return override
+	}
+	if dir, err := os.UserConfigDir(); err == nil && dir != "" {
+		return filepath.Join(dir, "qodex")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ".qodex"
+	}
+	if runtime.GOOS == "windows" {
+		return filepath.Join(home, "AppData", "Roaming", "qodex")
+	}
+	return filepath.Join(home, ".config", "qodex")
+}
+
 func candidatePaths(cwd, explicit string) []string {
 	if explicit != "" {
 		return []string{explicit}
 	}
-	home, _ := os.UserHomeDir()
 	return []string{
-		filepath.Join(home, ".config", "qodex", "config.toml"),
+		filepath.Join(UserConfigDir(), "config.toml"),
 		filepath.Join(cwd, ".qodex", "config.toml"),
 	}
 }

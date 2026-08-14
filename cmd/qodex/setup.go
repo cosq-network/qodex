@@ -436,14 +436,11 @@ func selectSetupModel(ctx context.Context, reader *bufio.Reader, registry setupM
 }
 
 func ensureConfigExists(projectRoot string) bool {
-	home, err := os.UserHomeDir()
-	if err == nil {
-		if _, err := os.Stat(filepath.Join(home, ".config", "qodex", "config.toml")); err == nil {
-			return true
-		}
+	if _, err := os.Stat(filepath.Join(config.UserConfigDir(), "config.toml")); err == nil {
+		return true
 	}
 	configPath := filepath.Join(projectRoot, ".qodex", "config.toml")
-	_, err = os.Stat(configPath)
+	_, err := os.Stat(configPath)
 	return err == nil
 }
 
@@ -486,9 +483,5 @@ func wrapModelError(err error) error {
 }
 
 func getInstallRoot() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ".qodex"
-	}
-	return filepath.Join(home, ".config", "qodex")
+	return config.UserConfigDir()
 }

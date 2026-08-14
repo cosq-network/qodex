@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -4903,6 +4904,9 @@ func (r *Registry) npxCommand(ctx context.Context, raw json.RawMessage) (Result,
 }
 
 func (r *Registry) nvmUse(ctx context.Context, raw json.RawMessage) (Result, error) {
+	if runtime.GOOS == "windows" {
+		return Result{}, fmt.Errorf("nvm_use is not supported on native Windows; use nvm-windows or configure the Node.js version with your Windows toolchain")
+	}
 	var args struct {
 		Version string `json:"version"`
 	}
