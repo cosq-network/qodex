@@ -18,6 +18,7 @@ type Config struct {
 	Approval    ApprovalConfig
 	Store       StoreConfig
 	Agent       AgentConfig
+	MCP         MCPConfig
 }
 
 type ModelConfig struct {
@@ -48,6 +49,17 @@ type AgentConfig struct {
 	MaxSteps     int
 	SkillRouting string
 	ToolCalls    string // "prompt" (default) or "native"
+}
+
+type MCPConfig struct {
+	Servers map[string]MCPServerConfig
+}
+
+type MCPServerConfig struct {
+	Command string
+	Args    []string
+	Env     map[string]string
+	Enabled bool
 }
 
 func Load(path string) (Config, error) {
@@ -99,6 +111,7 @@ func Defaults(projectRoot string) Config {
 		},
 		Store: StoreConfig{Path: storePath},
 		Agent: AgentConfig{MaxSteps: 12, SkillRouting: "auto", ToolCalls: "prompt"},
+		MCP:   MCPConfig{Servers: map[string]MCPServerConfig{}},
 	}
 }
 
@@ -134,6 +147,7 @@ type fileConfig struct {
 	Approval fileApprovalConfig `toml:"approval"`
 	Store    fileStoreConfig    `toml:"store"`
 	Agent    fileAgentConfig    `toml:"agent"`
+	MCP      fileMCPConfig      `toml:"mcp"`
 }
 
 type fileModelConfig struct {
@@ -164,6 +178,17 @@ type fileAgentConfig struct {
 	MaxSteps     *int    `toml:"max_steps"`
 	SkillRouting *string `toml:"skill_routing"`
 	ToolCalls    *string `toml:"tool_calls"`
+}
+
+type fileMCPConfig struct {
+	Servers map[string]fileMCPServerConfig `toml:"servers"`
+}
+
+type fileMCPServerConfig struct {
+	Command string            `toml:"command"`
+	Args    []string          `toml:"args"`
+	Env     map[string]string `toml:"env"`
+	Enabled *bool             `toml:"enabled"`
 }
 
 func (f fileConfig) mergeInto(cfg *Config) {
@@ -211,6 +236,16 @@ func (f fileConfig) mergeInto(cfg *Config) {
 	}
 	if f.Agent.ToolCalls != nil {
 		cfg.Agent.ToolCalls = *f.Agent.ToolCalls
+	}
+	if cfg.MCP.Servers == nil {
+		cfg.MCP.Servers = map[string]MCPServerConfig{}
+	}
+	for name, server := range f.MCP.Servers {
+		enabled := true
+		if server.Enabled != nil {
+			enabled = *server.Enabled
+		}
+		cfg.MCP.Servers[name] = MCPServerConfig{Command: server.Command, Args: server.Args, Env: server.Env, Enabled: enabled}
 	}
 }
 
@@ -321,6 +356,11 @@ func (c Config) Validate() error {
 	if c.Agent.ToolCalls != "prompt" && c.Agent.ToolCalls != "native" {
 		return fmt.Errorf("agent.tool_calls must be prompt or native")
 	}
+	for name, server := range c.MCP.Servers {
+		if strings.TrimSpace(name) == "" || strings.TrimSpace(server.Command) == "" {
+			return fmt.Errorf("mcp server names and commands are required")
+		}
+	}
 	for key, value := range map[string]string{
 		"approval.write_files":  c.Approval.WriteFiles,
 		"approval.run_commands": c.Approval.RunCommands,
@@ -350,6 +390,7 @@ func (c Config) Values() map[string]string {
 		"agent.max_steps":        strconv.Itoa(c.Agent.MaxSteps),
 		"agent.skill_routing":    c.Agent.SkillRouting,
 		"agent.tool_calls":       c.Agent.ToolCalls,
+		"mcp.servers":            strconv.Itoa(len(c.MCP.Servers)),
 	}
 }
 

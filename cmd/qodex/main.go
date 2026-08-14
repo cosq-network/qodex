@@ -20,6 +20,7 @@ import (
 
 	"github.com/benoybose/qodex/internal/agent"
 	"github.com/benoybose/qodex/internal/config"
+	"github.com/benoybose/qodex/internal/mcp"
 	"github.com/benoybose/qodex/internal/model"
 	"github.com/benoybose/qodex/internal/skills"
 	"github.com/benoybose/qodex/internal/store"
@@ -610,15 +611,16 @@ func sessionsCmd(cfgPath *string, yes *bool) *cobra.Command {
 func reviewCmd(cfgPath *string, yes *bool) *cobra.Command {
 	reviewPrompt := `Review the current state of uncommitted changes in this repository.
 
-1. First, call review_changes with scope="all" to get an overview of what changed.
-2. Read any files with significant changes to understand the context.
-3. For each changed file, consider: correctness, security, style, edge cases, and test coverage.
-4. Produce a structured review covering:
+	1. First, call git_workspace_summary to understand the branch, staged/unstaged changes, and recent commits.
+	2. Then call review_changes with scope="all" to get an overview of what changed.
+	3. Read any files with significant changes to understand the context.
+	4. For each changed file, consider: correctness, security, style, edge cases, and test coverage.
+	5. Produce a structured review covering:
    - Summary of changes
    - Potential issues or concerns
    - Suggestions for improvement
    - Missing tests or documentation
-5. Be specific and reference line numbers from the diff.`
+	6. Be specific and reference line numbers from the diff.`
 
 	return &cobra.Command{
 		Use:   "review",
@@ -658,11 +660,15 @@ type runtime struct {
 	Agent       *agent.Agent
 	Store       *store.Store
 	AutoApprove bool
+	MCPClients  []*mcp.Client
 }
 
 func (r *runtime) Close() {
 	if r.Store != nil {
 		_ = r.Store.Close()
+	}
+	for _, client := range r.MCPClients {
+		_ = client.Close()
 	}
 }
 
@@ -677,6 +683,11 @@ func buildRuntime(cfgPath string, yes bool, tuiMode bool, sessionID int64) (*run
 		return nil, err
 	}
 	skillSet, err := skills.Discover(cfg.ProjectRoot)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	instructions, err := skills.DiscoverInstructions(cfg.ProjectRoot)
 	if err != nil {
 		_ = db.Close()
 		return nil, err
@@ -710,16 +721,68 @@ func buildRuntime(cfgPath string, yes bool, tuiMode bool, sessionID int64) (*run
 		})
 	}
 	registry := tools.NewRegistry(cfg.ProjectRoot)
+	var mcpClients []*mcp.Client
+	mcpToolOwners := map[string]string{}
+	for serverName, serverCfg := range cfg.MCP.Servers {
+		if !serverCfg.Enabled {
+			continue
+		}
+		client, err := mcp.Start(context.Background(), mcp.ServerConfig{Command: serverCfg.Command, Args: serverCfg.Args, Env: serverCfg.Env})
+		if err != nil {
+			for _, started := range mcpClients {
+				_ = started.Close()
+			}
+			_ = db.Close()
+			return nil, fmt.Errorf("start MCP server %q: %w", serverName, err)
+		}
+		mcpClients = append(mcpClients, client)
+		mcpTools, err := client.ListTools(context.Background())
+		if err != nil {
+			for _, started := range mcpClients {
+				_ = started.Close()
+			}
+			_ = db.Close()
+			return nil, fmt.Errorf("list tools from MCP server %q: %w", serverName, err)
+		}
+		for _, remoteTool := range mcpTools {
+			remoteTool := remoteTool
+			toolName := "mcp_" + sanitizeMCPName(serverName) + "_" + sanitizeMCPName(remoteTool.Name)
+			if owner, exists := mcpToolOwners[toolName]; exists || registry.HasTool(toolName) {
+				if !exists {
+					owner = "built-in tool"
+				}
+				for _, started := range mcpClients {
+					_ = started.Close()
+				}
+				_ = db.Close()
+				return nil, fmt.Errorf("MCP tool name collision: %q from %s conflicts with %s", toolName, serverName+"/"+remoteTool.Name, owner)
+			}
+			mcpToolOwners[toolName] = serverName + "/" + remoteTool.Name
+			description := fmt.Sprintf("MCP tool %s/%s: %s", serverName, remoteTool.Name, remoteTool.Description)
+			registry.RegisterExternal(toolName, description, "network", remoteTool.InputSchema, func(ctx context.Context, args json.RawMessage) (tools.Result, error) {
+				content, isError, err := client.CallTool(ctx, remoteTool.Name, args)
+				if err != nil {
+					return tools.Result{}, err
+				}
+				result := tools.Result{OK: !isError, Summary: fmt.Sprintf("MCP %s/%s completed", serverName, remoteTool.Name), Content: content, Metadata: map[string]interface{}{"mcp_server": serverName, "mcp_tool": remoteTool.Name}}
+				if isError {
+					return result, fmt.Errorf("MCP tool %s/%s reported an error", serverName, remoteTool.Name)
+				}
+				return result, nil
+			})
+		}
+	}
 	agt := agent.New(agent.Options{
-		Config:      cfg,
-		Client:      client,
-		Tools:       registry,
-		Store:       db,
-		Skills:      skillSet,
-		Approver:    approver,
-		MaxSteps:    cfg.Agent.MaxSteps,
-		SessionID:   sessionID,
-		DebugWriter: debugLog,
+		Config:       cfg,
+		Client:       client,
+		Tools:        registry,
+		Store:        db,
+		Skills:       skillSet,
+		Instructions: instructions,
+		Approver:     approver,
+		MaxSteps:     cfg.Agent.MaxSteps,
+		SessionID:    sessionID,
+		DebugWriter:  debugLog,
 	})
 	if tuiMode {
 		probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -731,7 +794,22 @@ func buildRuntime(cfgPath string, yes bool, tuiMode bool, sessionID int64) (*run
 			}
 		}()
 	}
-	return &runtime{Agent: agt, Store: db, AutoApprove: yes || cfg.Approval.AutoApprove}, nil
+	return &runtime{Agent: agt, Store: db, AutoApprove: yes || cfg.Approval.AutoApprove, MCPClients: mcpClients}, nil
+}
+
+func sanitizeMCPName(value string) string {
+	var b strings.Builder
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "tool"
+	}
+	return b.String()
 }
 
 func maybeUseManagedRuntime(cfg config.Config) config.Config {

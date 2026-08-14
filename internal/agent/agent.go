@@ -24,16 +24,17 @@ type PlanState struct {
 }
 
 type Options struct {
-	Config      config.Config
-	Client      *model.Client
-	Tools       *tools.Registry
-	Store       *store.Store
-	Skills      []skills.Skill
-	Approver    Approver
-	Observer    Observer
-	MaxSteps    int
-	SessionID   int64
-	DebugWriter io.Writer // optional; if set, diagnostic messages are written here too
+	Config       config.Config
+	Client       *model.Client
+	Tools        *tools.Registry
+	Store        *store.Store
+	Skills       []skills.Skill
+	Instructions []skills.Instruction
+	Approver     Approver
+	Observer     Observer
+	MaxSteps     int
+	SessionID    int64
+	DebugWriter  io.Writer // optional; if set, diagnostic messages are written here too
 }
 
 type Agent struct {
@@ -52,6 +53,7 @@ type Agent struct {
 	planState      PlanState
 	allowedTools   []string
 	selectedSkills []skills.Skill
+	instructions   []skills.Instruction
 	debugWriter    io.Writer
 	probeCancel    context.CancelFunc
 }
@@ -97,16 +99,17 @@ func New(opts Options) *Agent {
 		maxSteps = 12
 	}
 	return &Agent{
-		cfg:         opts.Config,
-		client:      opts.Client,
-		tools:       opts.Tools,
-		store:       opts.Store,
-		skills:      opts.Skills,
-		approver:    opts.Approver,
-		observer:    opts.Observer,
-		maxSteps:    maxSteps,
-		sessionID:   opts.SessionID,
-		debugWriter: opts.DebugWriter,
+		cfg:          opts.Config,
+		client:       opts.Client,
+		tools:        opts.Tools,
+		store:        opts.Store,
+		skills:       opts.Skills,
+		instructions: opts.Instructions,
+		approver:     opts.Approver,
+		observer:     opts.Observer,
+		maxSteps:     maxSteps,
+		sessionID:    opts.SessionID,
+		debugWriter:  opts.DebugWriter,
 	}
 }
 
@@ -197,8 +200,8 @@ func (a *Agent) Run(ctx context.Context, prompt string) (result string, err erro
 
 	for step := 0; step < a.maxSteps; step++ {
 		if useNative {
-			tools := a.tools.ToolSchemas()
-			res, err := a.chatWithTools(ctx, tools)
+			toolSchemas := a.tools.ToolSchemasFor(a.allowedTools)
+			res, err := a.chatWithTools(ctx, toolSchemas)
 			if err != nil {
 				return "", err
 			}
@@ -389,10 +392,11 @@ func (a *Agent) systemPrompt(userPrompt string) string {
 		}
 	}
 	b.WriteString("\n")
-	toolPrompt := a.tools.Prompt()
-	if a.allowedTools != nil {
-		toolPrompt = filterToolPrompt(toolPrompt, a.allowedTools)
+	if rendered := skills.RenderInstructions(a.instructions, 12000); rendered != "" {
+		b.WriteString(rendered)
+		b.WriteString("\n")
 	}
+	toolPrompt := a.tools.PromptFor(a.allowedTools)
 	b.WriteString(toolPrompt)
 	if rendered := skills.RenderSliced(a.selectedSkills, userPrompt, 8000); rendered != "" {
 		b.WriteString("\n")
@@ -654,9 +658,9 @@ func (a *Agent) executeScript(ctx context.Context, call toolCall) (string, error
 		Summary: fmt.Sprintf("script %q from skill %q executed", found.Description, skillName),
 		Content: string(output),
 		Metadata: map[string]interface{}{
-			"script":    found.Description,
-			"skill":     skillName,
-			"command":   found.Command,
+			"script":     found.Description,
+			"skill":      skillName,
+			"command":    found.Command,
 			"provenance": fmt.Sprintf("skill:%s/script:%s", skillName, found.Description),
 		},
 	}

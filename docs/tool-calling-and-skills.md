@@ -79,7 +79,7 @@ The exact built-in set is defined in `internal/tools.NewRegistry`. Current group
 
 - file inspection and edits
 - shell and script execution
-- git inspection and review
+- git workspace summary, inspection, focused staging/commits, branches, worktrees, and history-preserving undo
 - test and formatter helpers
 - project index and LSP helpers
 - language/runtime helpers for Go, Node, Python, Java, .NET, Flutter, and Dart
@@ -140,7 +140,7 @@ Qodex loads:
 - user skills from `~/.config/qodex/skills`
 - project skills from `.qodex/skills`
 
-Project skills override user skills with the same name.
+Project skills override user skills with the same name. When a selected skill declares `allowed_tools`, Qodex uses that list as a tool-pack boundary for both prompt-mode tool descriptions and native tool schemas; the underlying registry remains available for compatibility and explicit dispatch.
 
 ## Skill File Layout
 

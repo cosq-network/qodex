@@ -52,6 +52,16 @@ jobs:
           CGO_ENABLED: 0
         run: go build -v -ldflags="-X main.version=0.1.0-dev -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" ./cmd/qodex
 
+      - name: CLI smoke test
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            ./qodex.exe version
+            ./qodex.exe --help >/dev/null
+          else
+            ./qodex version
+            ./qodex --help >/dev/null
+          fi
+
       - name: Vet
         run: go vet ./...
 

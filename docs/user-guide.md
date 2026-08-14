@@ -87,11 +87,11 @@ Smaller models are useful for testing the app, but they will make more mistakes 
 Run `qodex` without arguments for the first time, or run `qodex setup` explicitly, to start the interactive setup wizard:
 
 1. **Choose Backend** — Select `llama.cpp` (default), `vLLM`, or `SGLang`
-2. **Install Backend** — On Linux and macOS, Qodex downloads and installs the backend binaries automatically. On Windows, use WSL2 for managed installs or configure a backend manually.
-3. **Choose Model** — Select from the known model list or enter a model name manually
-4. **Download Or Place Model** — If the model is not already present, use `qodex models download <model-name>` or place the GGUF file in the configured models directory
-5. **Start Server** — Qodex attempts to start the model server in the background
-6. **Create Config** — Writes `.qodex/config.toml` and a starter project skill
+2. **Install Backend** — On Linux and macOS, Qodex installs llama.cpp automatically. vLLM and SGLang use the selected Python interpreter's `pip`; on Windows, use WSL2 for managed installs or configure a backend manually.
+3. **Choose Model** — For llama.cpp, select a catalog GGUF model. For vLLM/SGLang, enter a Hugging Face model ID.
+4. **Acquire Model** — llama.cpp models can be downloaded with `qodex models download <model-name>`; Python backends download the model through their own runtime.
+5. **Start Server** — Qodex waits for the backend's `/v1/models` endpoint to become ready.
+6. **Create Config** — Only after required installation, model acquisition, and server startup succeed, writes `.qodex/config.toml` and a starter project skill.
 
 After setup, use these commands to manage the model server:
 
@@ -167,7 +167,7 @@ Qodex ships with a broad set of built-in tools covering development workflows ac
 | Category | Tools |
 |----------|-------|
 | **File & Code** | `list_files`, `read_file`, `search_text`, `write_file`, `write_patch`, `run_command`, `run_script`, `run_tests`, `run_formatter`, `review_changes`, `project_index` |
-| **Git** | `git_status`, `git_diff`, `git_log` |
+| **Git** | `git_workspace_summary`, `git_status`, `git_diff`, `git_log`, `git_stage`, `git_commit`, `git_branch`, `git_worktree`, `git_undo`, `git_snapshot`, `git_restore_snapshot` |
 | **Build** | `cmake_configure`, `cmake_build`, `clang_format`, `clang_tidy`, `make_build`, `nmake_build`, `msbuild` |
 | **Network** | `curl`, `wget` |
 | **Java** | `javac_compile`, `java_run` |
@@ -185,7 +185,9 @@ Qodex ships with a broad set of built-in tools covering development workflows ac
 | **Android / ADB** | `adb_devices`, `adb_shell`, `adb_push`, `adb_pull` |
 | **LSP** | `lsp_diagnostics`, `lsp_definition`, `lsp_find_references` |
 
-Each tool exposes a JSON schema so the model knows which parameters to pass. Tools are classified by effect (`read`, `write`, `shell`, `network`, `destructive`) to determine approval requirements.
+Each tool exposes a JSON schema so the model knows which parameters to pass. Tools are classified by effect (`read`, `write`, `shell`, `network`, `destructive`) to determine approval requirements. Specialized tools are skill-gated: their schemas are sent to the model only when the relevant skill is selected.
+
+Qodex also loads common instruction files such as `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, `.github/copilot-instructions.md`, and `.cursor/rules/*.mdc`. These files provide context but cannot bypass Qodex approval or safety policy. See [MCP Integration](mcp.md) for MCP servers and instruction interoperability details.
 
 ## Built-in Skills
 
@@ -286,6 +288,8 @@ project index queries
 LSP diagnostics, definitions, and references
 ```
 
+For Git workflows, prefer `git_workspace_summary` before making changes, use `git_snapshot` before risky operations, then use `git_stage` and `git_commit` for focused commits, `git_branch`/`git_worktree` for isolated work, and `git_undo` for history-preserving reverts.
+
 Usually requires approval:
 
 ```text
@@ -369,6 +373,8 @@ backend = "llama.cpp"
 
 Qodex installs llama.cpp to `~/.config/qodex/bin/` and starts the server on port `8080` by default. Models are stored in `~/.config/qodex/models/`.
 
+The managed llama.cpp release is pinned for reproducible setup. Set `QODEX_LLAMA_CPP_VERSION` to override it, and optionally set `QODEX_LLAMA_CPP_SHA256` to verify the downloaded archive before extraction.
+
 ### vLLM
 
 ```toml
@@ -376,7 +382,7 @@ Qodex installs llama.cpp to `~/.config/qodex/bin/` and starts the server on port
 backend = "vllm"
 ```
 
-vLLM is installed via `pip` and serves an OpenAI-compatible endpoint on port `8000` by default.
+vLLM is installed with `python -m pip` and serves an OpenAI-compatible endpoint on port `8000` by default. Use a virtual environment before running setup. Configure a Hugging Face model ID, for example `Qwen/Qwen2.5-Coder-7B-Instruct`.
 
 ### SGLang
 
@@ -385,7 +391,7 @@ vLLM is installed via `pip` and serves an OpenAI-compatible endpoint on port `80
 backend = "sglang"
 ```
 
-SGLang is installed via `pip` and serves an OpenAI-compatible endpoint on port `8000` by default.
+SGLang is installed with `python -m pip` and serves an OpenAI-compatible endpoint on port `8000` by default. Use a virtual environment before running setup and configure a Hugging Face model ID.
 
 All backends are managed through `qodex serve start|stop|status`. See [llama.cpp Setup Guide](llama-cpp-setup.md) for additional model recommendations.
 

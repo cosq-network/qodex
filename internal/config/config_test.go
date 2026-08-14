@@ -164,6 +164,34 @@ func TestValuesIncludeSkillRouting(t *testing.T) {
 	}
 }
 
+func TestLoadMCPServers(t *testing.T) {
+	root := t.TempDir()
+	restore := chdir(t, root)
+	defer restore()
+	if err := os.MkdirAll(filepath.Join(root, ".qodex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data := `[mcp.servers.files]
+command = "filesystem-server"
+args = ["/tmp/project"]
+enabled = true
+
+[mcp.servers.files.env]
+MODE = "test"
+`
+	if err := os.WriteFile(filepath.Join(root, ".qodex", "config.toml"), []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, ok := cfg.MCP.Servers["files"]
+	if !ok || server.Command != "filesystem-server" || !server.Enabled || server.Env["MODE"] != "test" {
+		t.Fatalf("unexpected MCP config: %+v", cfg.MCP.Servers)
+	}
+}
+
 func chdir(t *testing.T, dir string) func() {
 	t.Helper()
 	original, err := os.Getwd()

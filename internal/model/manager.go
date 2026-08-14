@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -63,6 +65,10 @@ type Manager struct {
 	threads       int
 	client        *Client
 }
+
+// Keep the managed llama.cpp artifact reproducible. Operators can opt into a
+// newer release explicitly with QODEX_LLAMA_CPP_VERSION after validating it.
+const defaultLlamaCppVersion = "b9821"
 
 func NewManager(backend Backend, installRoot, model string, port int) *Manager {
 	if port <= 0 {
@@ -185,6 +191,11 @@ func (m *Manager) installLlamaCpp(ctx context.Context) error {
 		return fmt.Errorf("write download: %w", err)
 	}
 	tmpFile.Close()
+	if expected := strings.TrimSpace(os.Getenv("QODEX_LLAMA_CPP_SHA256")); expected != "" {
+		if err := verifySHA256(tmpFile.Name(), expected); err != nil {
+			return fmt.Errorf("llama.cpp archive verification failed: %w", err)
+		}
+	}
 
 	if err := m.extractTar(tmpFile.Name(), binDir); err != nil {
 		return fmt.Errorf("extract binary: %w", err)
@@ -218,18 +229,27 @@ func (m *Manager) llamaDownloadURL() string {
 }
 
 func (m *Manager) getLatestVersion() string {
-	resp, err := http.Get("https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=1")
+	if version := strings.TrimSpace(os.Getenv("QODEX_LLAMA_CPP_VERSION")); version != "" {
+		return version
+	}
+	return defaultLlamaCppVersion
+}
+
+func verifySHA256(path, expected string) error {
+	f, err := os.Open(path)
 	if err != nil {
-		return "b9821"
+		return err
 	}
-	defer resp.Body.Close()
-	var releases []struct {
-		TagName string `json:"tag_name"`
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return err
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil || len(releases) == 0 {
-		return "b9821"
+	actual := hex.EncodeToString(h.Sum(nil))
+	if !strings.EqualFold(actual, strings.TrimSpace(expected)) {
+		return fmt.Errorf("sha256 mismatch: got %s, want %s", actual, expected)
 	}
-	return releases[0].TagName
+	return nil
 }
 
 func (m *Manager) extractTar(tarPath, destDir string) error {
@@ -299,26 +319,40 @@ func (m *Manager) extractTar(tarPath, destDir string) error {
 }
 
 func (m *Manager) installVLLM() error {
-	if _, err := exec.LookPath("vllm"); err == nil {
+	python, err := pythonExecutable()
+	if err != nil {
+		return err
+	}
+	if err := exec.Command(python, "-c", "import vllm").Run(); err == nil {
 		return nil
 	}
-	if _, err := exec.LookPath("pip"); err != nil {
-		return fmt.Errorf("pip not found - install Python 3.8+ with pip first")
-	}
-	cmd := exec.Command("pip", "install", "-q", "vllm", "fastapi", "uvicorn")
+	cmd := exec.Command(python, "-m", "pip", "install", "-q", "vllm", "fastapi", "uvicorn")
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
 func (m *Manager) installSGLang() error {
-	if _, err := exec.LookPath("sglang"); err == nil {
+	python, err := pythonExecutable()
+	if err != nil {
+		return err
+	}
+	if err := exec.Command(python, "-c", "import sglang").Run(); err == nil {
 		return nil
 	}
-	cmd := exec.Command("pip", "install", "-q", "sglang", "openai")
+	cmd := exec.Command(python, "-m", "pip", "install", "-q", "sglang", "openai")
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func pythonExecutable() (string, error) {
+	for _, candidate := range []string{"python3", "python"} {
+		if path, err := exec.LookPath(candidate); err == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("Python 3 with pip not found - install Python 3.8+ and activate a virtual environment first")
 }
 
 func (m *Manager) binaryPath() string {
@@ -344,9 +378,12 @@ func (m *Manager) Status(ctx context.Context) (ServerStatus, error) {
 	if data, err := os.ReadFile(m.pidFile()); err == nil {
 		var pid int
 		if _, perr := fmt.Sscanf(string(data), "%d", &pid); perr == nil {
-			if p, err := os.FindProcess(pid); err == nil && p != nil {
+			if p, err := os.FindProcess(pid); err == nil && p != nil && processAlive(p) {
 				status.Running = true
 				status.PID = pid
+			} else {
+				status.Error = "stale pid file"
+				_ = m.ClearState()
 			}
 		} else {
 			status.Error = "invalid pid file"
@@ -461,22 +498,51 @@ func (m *Manager) startLlamaCpp() error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start failed: %w", err)
 	}
-
-	if err := os.WriteFile(m.pidFile(), []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0o666); err != nil {
+	m.watchProcess(cmd)
+	if err := writeAtomicFile(m.pidFile(), []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0o666); err != nil {
 		return fmt.Errorf("write pid file: %w", err)
 	}
 	_ = m.saveState(cmd.Process.Pid)
 
-	for i := 0; i < 30; i++ {
-		time.Sleep(500 * time.Millisecond)
-		status, _ := m.Status(context.Background())
-		if status.Running {
-			_ = m.saveState(cmd.Process.Pid)
-			fmt.Printf("Model server started (PID: %d, Port: %d)\n", cmd.Process.Pid, m.port)
+	if err := m.waitForReady(context.Background(), cmd.Process.Pid, 30*time.Second); err != nil {
+		_ = cmd.Process.Kill()
+		_ = m.ClearState()
+		return err
+	}
+	_ = m.saveState(cmd.Process.Pid)
+	fmt.Printf("Model server started (PID: %d, Port: %d)\n", cmd.Process.Pid, m.port)
+	return nil
+}
+
+// waitForReady waits for the backend's OpenAI-compatible health endpoint. A
+// process being alive is not sufficient: model loading and GPU initialization
+// can take a substantial amount of time before /v1/models responds.
+func (m *Manager) waitForReady(ctx context.Context, pid int, timeout time.Duration) error {
+	readyCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	var lastErr error
+	for {
+		checkCtx, checkCancel := context.WithTimeout(readyCtx, 2*time.Second)
+		lastErr = m.client.Check(checkCtx)
+		checkCancel()
+		if lastErr == nil {
 			return nil
 		}
+		select {
+		case <-readyCtx.Done():
+			if process, err := os.FindProcess(pid); err == nil {
+				_ = process.Kill()
+			}
+			_ = m.ClearState()
+			if lastErr != nil {
+				return fmt.Errorf("server process %d did not become ready within %s: %w", pid, timeout, lastErr)
+			}
+			return fmt.Errorf("server process %d did not become ready within %s", pid, timeout)
+		case <-ticker.C:
+		}
 	}
-	return fmt.Errorf("server failed to start within 15 seconds")
 }
 
 func (m *Manager) findModel() string {
@@ -504,16 +570,19 @@ func (m *Manager) findModel() string {
 }
 
 func (m *Manager) startVLLM(ctx context.Context) error {
-	modelPath := m.findModel()
-	if modelPath == "" {
-		return fmt.Errorf("no model found - download with: qodex models download %s", m.model)
+	if strings.TrimSpace(m.model) == "" {
+		return fmt.Errorf("no model configured - set model.model to a Hugging Face model ID")
+	}
+	python, err := pythonExecutable()
+	if err != nil {
+		return err
 	}
 	if err := m.ensureUsablePort(); err != nil {
 		return err
 	}
 
-	cmd := exec.CommandContext(ctx, "python", "-m", "vllm.entrypoints.openai.api_server",
-		"--model", modelPath,
+	cmd := exec.CommandContext(ctx, python, "-m", "vllm.entrypoints.openai.api_server",
+		"--model", m.model,
 		"--host", "127.0.0.1",
 		"--port", fmt.Sprintf("%d", m.port),
 	)
@@ -525,22 +594,26 @@ func (m *Manager) startVLLM(ctx context.Context) error {
 		return fmt.Errorf("start failed: %w", err)
 	}
 	_ = m.saveState(cmd.Process.Pid)
+	m.watchProcess(cmd)
 
 	fmt.Printf("Model server starting (Port: %d)...\n", m.port)
-	return nil
+	return m.waitForReady(ctx, cmd.Process.Pid, 2*time.Minute)
 }
 
 func (m *Manager) startSGLang(ctx context.Context) error {
-	modelPath := m.findModel()
-	if modelPath == "" {
-		return fmt.Errorf("no model found - download with: qodex models download %s", m.model)
+	if strings.TrimSpace(m.model) == "" {
+		return fmt.Errorf("no model configured - set model.model to a Hugging Face model ID")
+	}
+	python, err := pythonExecutable()
+	if err != nil {
+		return err
 	}
 	if err := m.ensureUsablePort(); err != nil {
 		return err
 	}
 
-	cmd := exec.CommandContext(ctx, "python", "-m", "sglang.launch_server",
-		"--model-path", modelPath,
+	cmd := exec.CommandContext(ctx, python, "-m", "sglang.launch_server",
+		"--model-path", m.model,
 		"--host", "127.0.0.1",
 		"--port", fmt.Sprintf("%d", m.port),
 	)
@@ -552,9 +625,10 @@ func (m *Manager) startSGLang(ctx context.Context) error {
 		return fmt.Errorf("start failed: %w", err)
 	}
 	_ = m.saveState(cmd.Process.Pid)
+	m.watchProcess(cmd)
 
 	fmt.Printf("Model server starting (Port: %d)...\n", m.port)
-	return nil
+	return m.waitForReady(ctx, cmd.Process.Pid, 2*time.Minute)
 }
 
 func (m *Manager) InstallRoot() string {
@@ -626,7 +700,51 @@ func (m *Manager) saveState(pid int) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(m.stateFile(), data, 0o666)
+	return writeAtomicFile(m.stateFile(), data, 0o666)
+}
+
+func (m *Manager) watchProcess(cmd *exec.Cmd) {
+	pid := cmd.Process.Pid
+	go func() {
+		_ = cmd.Wait()
+		state, err := m.LoadState()
+		if err == nil && state.PID == pid {
+			_ = m.ClearState()
+		}
+	}()
+}
+
+func writeAtomicFile(path string, data []byte, mode os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".qodex-state-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err == nil {
+		return nil
+	} else if runtime.GOOS != "windows" {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 func (m *Manager) ClearState() error {

@@ -44,6 +44,7 @@ internal/agent/  agent loop, approvals, context compaction, events
 internal/config/ layered config loading, defaults, validation
 internal/lsp/    JSON-RPC LSP client over stdio
 internal/model/  OpenAI-compatible HTTP client and backend manager
+internal/mcp/    MCP stdio client and tool discovery
 internal/skills/ built-in + local skill discovery and routing
 internal/store/  SQLite persistence and migrations
 internal/tools/  tool registry, executors, diff preview, project index
@@ -61,7 +62,9 @@ CLI/TUI
   -> config.Load
   -> store.Open
   -> skills.Discover
+  -> skills.DiscoverInstructions
   -> tools.NewRegistry
+  -> MCP server tool registration
   -> model.NewClient
   -> agent.Run
 ```
@@ -165,7 +168,7 @@ schema_version(version, applied_at)
 Important tool groups:
 
 - file inspection and edits
-- git status/diff/log/review
+- git summary/status/diff/log/stage/commit/branch/worktree/revert/review
 - test and formatter helpers
 - project index and LSP navigation
 - language/runtime tools for Go, Node, Python, .NET, Java, Flutter, and Dart
@@ -173,6 +176,8 @@ Important tool groups:
 - Docker, QEMU, and ADB helpers
 
 Every tool must be registered in the registry to be reachable by the agent. If you add a tool implementation without registration, it will not appear in `ToolSchemas()` or the prompt tool list.
+
+When skills are active, `ToolSchemasFor` and `PromptFor` expose only the intersection of their `allowed_tools` entries. This keeps specialized language/runtime tools out of the model context unless the relevant skill is selected. MCP tools are registered dynamically with a namespaced name and `network` effect.
 
 ## Skills
 
@@ -197,13 +202,22 @@ Project-local skills override user skills with the same name. A skill can includ
 
 The agent can select skills via keyword heuristics or model-assisted routing, depending on `agent.skill_routing`.
 
+Qodex also loads interoperable instruction files such as `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, `.github/copilot-instructions.md`, and `.cursor/rules/*.mdc`. They are context-only and cannot bypass approval or validation.
+
+## MCP
+
+MCP servers are configured under `[mcp.servers.<name>]`, started over stdio during runtime construction, initialized, queried with `tools/list`, and exposed as `mcp_<server>_<tool>`. Calls use `tools/call`; results and failures pass through the normal agent persistence and approval path. See [MCP Integration](mcp.md).
+
 ## Backend Notes
 
 Backend management lives under `internal/model`.
 
 - Linux and macOS support managed `llama.cpp` installation.
 - Native Windows currently does not support automatic `llama.cpp` setup.
-- `vLLM` and `SGLang` installation relies on local Python and `pip`.
+- `llama.cpp` uses a pinned release artifact, with optional `QODEX_LLAMA_CPP_VERSION` and `QODEX_LLAMA_CPP_SHA256` overrides.
+- `vLLM` and `SGLang` installation uses the selected Python interpreter's `python -m pip`; setup expects a user-managed virtual environment.
+- `llama.cpp` selects local GGUF files, while `vLLM` and `SGLang` receive Hugging Face model IDs and resolve model storage themselves.
+- Managed startup waits for `/v1/models` readiness and removes stale PID/state files when possible.
 
 The model client itself only depends on an OpenAI-compatible API, so external endpoints remain supported.
 

@@ -143,6 +143,33 @@ func TestGitLogRegistered(t *testing.T) {
 	}
 }
 
+func TestGitWorkflowToolsRegistered(t *testing.T) {
+	registry := NewRegistry(t.TempDir())
+	for _, name := range []string{"git_workspace_summary", "git_stage", "git_commit", "git_branch", "git_worktree", "git_undo", "git_snapshot", "git_restore_snapshot"} {
+		tool, ok := registry.Get(name)
+		if !ok {
+			t.Fatalf("expected %s to be registered", name)
+		}
+		if tool.Description == "" {
+			t.Fatalf("expected description for %s", name)
+		}
+	}
+}
+
+func TestToolSchemasForSkillPack(t *testing.T) {
+	registry := NewRegistry(t.TempDir())
+	schemas := registry.ToolSchemasFor([]string{"git_status", "git_workspace_summary"})
+	if len(schemas) != 2 {
+		t.Fatalf("schema count = %d, want 2", len(schemas))
+	}
+	if _, ok := registry.Get("docker_run"); !ok {
+		t.Fatal("registry should retain specialized tools for compatibility")
+	}
+	if prompt := registry.PromptFor([]string{"git_status"}); strings.Contains(prompt, "docker_run") {
+		t.Fatal("specialized tool leaked into filtered prompt")
+	}
+}
+
 func TestGitLogInRepo(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("test\n"), 0o644); err != nil {
@@ -184,6 +211,45 @@ func TestGitLogInRepo(t *testing.T) {
 	}
 	if !strings.Contains(res.Content, "initial") {
 		t.Fatalf("expected commit message in log output, got: %s", res.Content)
+	}
+}
+
+func TestGitCommitPathsDoNotIncludeOtherStagedFiles(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"one.txt", "two.txt"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("initial\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{{"init", root}, {"-C", root, "config", "user.email", "test@test.com"}, {"-C", root, "config", "user.name", "Test"}, {"-C", root, "add", "."}, {"-C", root, "commit", "-m", "initial"}} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v: %s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "one.txt"), []byte("one changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "two.txt"), []byte("two changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "-C", root, "add", "two.txt").CombinedOutput(); err != nil {
+		t.Fatalf("stage unrelated file failed: %v: %s", err, out)
+	}
+	registry := NewRegistry(root)
+	tool, _ := registry.Get("git_commit")
+	args, _ := json.Marshal(map[string]interface{}{"message": "one only", "paths": []string{"one.txt"}})
+	if _, err := tool.Execute(context.Background(), args); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("git", "-C", root, "show", "--format=%s", "--name-only", "HEAD").CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "two.txt") {
+		t.Fatalf("unrelated staged file was committed: %s", out)
+	}
+	if _, err := os.Stat(filepath.Join(root, "two.txt")); err != nil {
+		t.Fatal(err)
 	}
 }
 

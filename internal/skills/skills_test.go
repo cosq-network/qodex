@@ -3,6 +3,7 @@ package skills
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -523,5 +524,58 @@ tool = "run_command"
 func TestRenderEmpty(t *testing.T) {
 	if r := Render(nil, 100); r != "" {
 		t.Fatalf("expected empty, got %q", r)
+	}
+}
+
+func TestDiscoverInstructionsLoadsCommonFilesFromParentToProject(t *testing.T) {
+	root := t.TempDir()
+	child := filepath.Join(root, "repo")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("parent rules"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(child, "CLAUDE.md"), []byte("local rules"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := DiscoverInstructions(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) < 2 || got[0].Content != "parent rules" || got[len(got)-1].Content != "local rules" {
+		t.Fatalf("instructions = %+v", got)
+	}
+	if !strings.Contains(RenderInstructions(got, 1000), "local rules") {
+		t.Fatal("expected rendered local instructions")
+	}
+}
+
+func TestRenderInstructionsSmallBudgetDoesNotPanic(t *testing.T) {
+	got := RenderInstructions([]Instruction{{Name: "rules", Path: "rules.md", Content: "content"}}, 1)
+	if got == "" {
+		t.Fatal("expected bounded instruction header")
+	}
+}
+
+func TestDiscoverInstructionsSkipsConditionalCursorRules(t *testing.T) {
+	root := t.TempDir()
+	rulesDir := filepath.Join(root, ".cursor", "rules")
+	if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	conditional := "---\ndescription: TypeScript only\nglobs: **/*.ts\nalwaysApply: false\n---\nconditional"
+	if err := os.WriteFile(filepath.Join(rulesDir, "conditional.mdc"), []byte(conditional), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rulesDir, "always.mdc"), []byte("---\nalwaysApply: true\n---\nalways"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := DiscoverInstructions(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Name != "always.mdc" {
+		t.Fatalf("instructions = %+v", got)
 	}
 }

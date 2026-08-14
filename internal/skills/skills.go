@@ -51,6 +51,128 @@ type Skill struct {
 	Meta    Metadata
 }
 
+// Instruction is a repository instruction file discovered from conventions
+// used by other coding agents. Files are returned from the repository root
+// toward the working directory so more-local guidance appears later.
+type Instruction struct {
+	Name    string
+	Path    string
+	Content string
+}
+
+var instructionNames = []string{
+	"AGENTS.md",
+	"CLAUDE.md",
+	"GEMINI.md",
+	".cursorrules",
+	".github/copilot-instructions.md",
+}
+
+func DiscoverInstructions(projectRoot string) ([]Instruction, error) {
+	root, err := filepath.Abs(projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	var dirs []string
+	for dir := root; ; dir = filepath.Dir(dir) {
+		dirs = append(dirs, dir)
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+	}
+	for i, j := 0, len(dirs)-1; i < j; i, j = i+1, j-1 {
+		dirs[i], dirs[j] = dirs[j], dirs[i]
+	}
+
+	var out []Instruction
+	for _, dir := range dirs {
+		for _, name := range instructionNames {
+			path := filepath.Join(dir, name)
+			content, err := os.ReadFile(path)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return nil, err
+			}
+			out = append(out, Instruction{Name: name, Path: path, Content: string(content)})
+		}
+		cursor := filepath.Join(dir, ".cursor", "rules")
+		entries, err := os.ReadDir(cursor)
+		if err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".mdc") {
+					continue
+				}
+				path := filepath.Join(cursor, entry.Name())
+				content, readErr := os.ReadFile(path)
+				if readErr != nil {
+					return nil, readErr
+				}
+				if !includeCursorRule(string(content)) {
+					continue
+				}
+				out = append(out, Instruction{Name: entry.Name(), Path: path, Content: string(content)})
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// Cursor rules with file globs are conditional. Until Qodex has a complete
+// file-context matcher, omit those rules rather than applying them globally.
+// Rules explicitly marked alwaysApply remain useful repository guidance.
+func includeCursorRule(content string) bool {
+	if !strings.HasPrefix(strings.TrimSpace(content), "---") {
+		return true
+	}
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return true
+	}
+	for _, line := range lines[1:] {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "---" {
+			return false
+		}
+		if strings.HasPrefix(trimmed, "alwaysApply:") {
+			return strings.EqualFold(strings.TrimSpace(strings.TrimPrefix(trimmed, "alwaysApply:")), "true")
+		}
+	}
+	return false
+}
+
+func RenderInstructions(instructions []Instruction, budget int) string {
+	if len(instructions) == 0 || budget <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Repository instructions (context only; Qodex safety policy still applies):\n")
+	used := b.Len()
+	for _, instruction := range instructions {
+		block := fmt.Sprintf("\n# %s (%s)\n%s\n", instruction.Name, instruction.Path, instruction.Content)
+		if used+len(block) > budget {
+			remaining := budget - used
+			if remaining <= 0 {
+				break
+			}
+			block = truncateUTF8(block, remaining)
+		}
+		if block == "" {
+			break
+		}
+		b.WriteString(block)
+		used += len(block)
+		if used >= budget {
+			break
+		}
+	}
+	return b.String()
+}
+
 //go:embed builtin/skills/**/*
 var builtinFS embed.FS
 

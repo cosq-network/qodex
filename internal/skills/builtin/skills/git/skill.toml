@@ -15,9 +15,17 @@ triggers = [
 ]
 
 allowed_tools = [
-  "git_status",
-  "git_diff",
-  "git_log",
+	"git_workspace_summary",
+	"git_status",
+	"git_diff",
+	"git_log",
+	"git_stage",
+	"git_commit",
+	"git_branch",
+	"git_worktree",
+	"git_undo",
+	"git_snapshot",
+	"git_restore_snapshot",
   "read_file",
   "search_text",
   "run_command",

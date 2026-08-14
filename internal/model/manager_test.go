@@ -2,11 +2,17 @@ package model
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestDiagnosticsDetectsInstalledBackendAndModel(t *testing.T) {
@@ -107,5 +113,36 @@ func TestStatusUsesSavedStatePort(t *testing.T) {
 	}
 	if status.Port != port {
 		t.Fatalf("status port = %d, want %d", status.Port, port)
+	}
+}
+
+func TestWaitForReadyChecksModelsEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path = %s, want /v1/models", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	mgr := NewManager(BackendExternal, t.TempDir(), "demo", 1)
+	mgr.client = NewClient(server.URL+"/v1", "demo")
+	if err := mgr.waitForReady(context.Background(), 1234, 2*time.Second); err != nil {
+		t.Fatalf("waitForReady failed: %v", err)
+	}
+}
+
+func TestVerifySHA256(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "archive.tar.gz")
+	data := []byte("archive")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	if err := verifySHA256(path, hex.EncodeToString(sum[:])); err != nil {
+		t.Fatalf("verifySHA256 failed: %v", err)
+	}
+	if err := verifySHA256(path, strings.Repeat("0", 64)); err == nil {
+		t.Fatal("expected checksum mismatch")
 	}
 }

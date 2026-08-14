@@ -18,11 +18,25 @@ As of August 14, 2026, the repo also reflects the following recent hardening wor
 - tool-schema tests cover these higher-level tools to prevent future registry drift
 - docs have been cleaned up to remove stale planning/checklist material
 - Windows support is documented more accurately: native Windows can run the CLI, but automatic `llama.cpp` setup is not yet supported outside WSL2
-- setup/docs now describe the current model flow more accurately: backend installation is automated on Linux/macOS, while model download is managed through `qodex models download`
+- setup/docs now describe the current model flow more accurately: backend installation is automated on Linux/macOS, llama.cpp models are managed through `qodex models download`, and vLLM/SGLang use backend-managed Hugging Face model acquisition
 - model downloads are now robust: interrupted transfers resume via HTTP `Range` after comparing local size against a `HEAD`-derived remote size, corrupt or oversized partial files are removed and re-downloaded, and every completed download is validated against the GGUF magic header
 - downloads report live progress in `qodex setup` and `qodex models download`
 - llama.cpp startup is configurable: context size comes from `runtime.context_tokens` and CPU thread count defaults to the machine's logical CPUs, with `--ctx`/`--threads` overrides on `qodex serve start` and `qodex up`
 - skill context budgets accept `context_budget_tokens` as a legacy alias for `context_budget`
+- setup now uses backend-specific model contracts: llama.cpp selects local GGUF files, while vLLM/SGLang use Hugging Face model IDs
+- managed startup waits for `/v1/models` readiness, cleans stale PID/state files, and watches managed processes for unexpected exit
+- setup writes configuration and starter skills atomically and refuses to persist a managed configuration after installation, model acquisition, or startup failure
+- llama.cpp installation uses a pinned release by default, with optional environment overrides for release version and SHA-256 verification
+- CI includes cross-platform CLI smoke checks in addition to build, vet, race-test, and packaging validation
+- MCP stdio client support discovers and exposes namespaced MCP tools through the normal approval and persistence path
+- interoperable instruction discovery loads `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, Cursor rules, and Copilot instructions
+- specialized tool schemas are skill-gated so language/runtime tool packs are omitted from the model context unless relevant
+- Git workflows now include workspace summaries, focused staging/commits, branch switching, worktrees, and history-preserving undo via revert
+- Git workflows also support tracked-worktree snapshots and explicit snapshot restoration under `.qodex/git-snapshots/`
+- MCP requests, tool registration, and startup cleanup are covered against stalled servers, name collisions, and discovery failures
+- instruction rendering is bounded safely, and conditional Cursor rules are not applied globally
+- Windows managed-process status checks validate process exit state instead of trusting PID existence alone
+- regression tests cover the new MCP, Git workflow, instruction, and tool-pack boundaries; focused tests and vet pass, with broader runtime checks still dependent on host capabilities
 
 ## Phase 0: Foundation MVP
 
@@ -207,13 +221,17 @@ Goal: reduce product risk, close platform/runtime gaps, and improve confidence t
 | completed | Resumable model downloads | Runtime | Partial GGUF downloads resume via HTTP `Range` after comparing the local size against the remote size from a `HEAD` request; corrupt or oversized partial files are removed and re-downloaded. |
 | completed | Model download validation and progress | Runtime/CLI | Completed downloads are validated against the GGUF magic header, and `qodex setup` / `qodex models download` report live transfer progress. |
 | completed | Configurable llama.cpp startup flags | Runtime/CLI | Context size defaults to `runtime.context_tokens` and CPU threads default to the logical CPU count; `qodex serve start` and `qodex up` accept `--ctx` and `--threads` overrides. |
-| in-progress | Backend/setup UX hardening | Runtime/UX | Model acquisition is now fully automated for catalog models (download, resume, validation), but arbitrary user-supplied models still require a manual download path. |
-| in-progress | Platform validation beyond build/test coverage | Runtime/QA | CI and packaging now validate builds across Linux, macOS, and Windows, but native Windows runtime behavior still needs deeper real-world validation beyond current unit/integration coverage. |
-| in-progress | Production readiness hardening | Product/Safety | The core assistant works, but broad production readiness still depends on tighter platform validation, operational polish, and continued reduction of docs/code drift. |
+| completed | Backend/setup UX hardening | Runtime/UX | Setup now uses backend-specific model contracts, atomic configuration writes, pinned llama.cpp artifacts with optional checksum verification, and readiness checks before reporting success. Arbitrary user-supplied llama.cpp models still require a manual download path. |
+| completed | MCP client integration | Extensibility/Safety | Added MCP stdio initialization, tool discovery, collision-safe namespaced registration, deadline-aware `tools/call`, network approval classification, and cleanup on startup/discovery failure. |
+| completed | Instruction-file interoperability | Context/Docs | Loads common `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, Cursor, and Copilot instruction files in parent-to-child order as bounded context-only guidance; conditional Cursor rules are not applied globally. |
+| completed | Skill-gated tool packs | Tools/Skills | Specialized tool schemas are exposed through active skill allowlists, reducing default model context without removing compatibility from the registry. |
+| completed | Git workflow hardening | Git/Tools | Added high-signal workspace summaries, path-scoped commits that protect unrelated staged work, branch/worktree management, tracked-worktree snapshots kept outside Git status, explicit restoration, and history-preserving undo. |
+| in-progress | Platform validation beyond build/test coverage | Runtime/QA | CI now exercises builds, package tests, and CLI smoke commands across Linux, macOS, and Windows. Native Windows backend behavior and external-tool-dependent features still need real-environment validation. |
+| in-progress | Production readiness hardening | Product/Safety | Setup, managed runtime failure handling, MCP approval boundaries, and Git mutation workflows are hardened; remaining work is broader real-repository end-to-end validation, external toolchain coverage, and operational polish. |
 
 ## Current Priority Order
 
-1. Harden setup and backend management so first-run flows are more predictable across supported environments.
-2. Expand validation of platform-specific runtime behavior, especially native Windows and external-tool-dependent features.
+1. Expand validation of platform-specific runtime behavior, especially native Windows and external-tool-dependent features.
+2. Add MCP ecosystem validation and safe server discovery/installation workflows.
 3. Improve production-readiness signals through stronger end-to-end validation around real repositories and external toolchains.
 4. Continue reducing code/docs drift by keeping tool exposure, setup behavior, platform support claims, and release packaging expectations in sync.

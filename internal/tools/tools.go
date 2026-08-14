@@ -60,6 +60,7 @@ func NewRegistry(projectRoot string) *Registry {
 	r.add("git_status", "Show git status", "read", gitStatusParams, r.gitStatus)
 	r.add("git_diff", "Show git diff", "read", gitDiffParams, r.gitDiff)
 	r.add("git_log", "Show git log. Accepts limit (default 20) and oneline (bool).", "read", gitLogParams, r.gitLog)
+	r.registerGitWorkflowTools()
 	r.add("cmake_configure", "Run cmake configure. Accepts build_dir (default 'build'), source_dir, generator, and defs.", "shell", cmakeConfigureParams, r.cmakeConfigure)
 	r.add("cmake_build", "Run cmake --build. Accepts build_dir (default 'build'), target, and config (Release/Debug).", "shell", cmakeBuildParams, r.cmakeBuild)
 	r.add("clang_format", "Run clang-format on a file. Accepts path, in_place (bool), and style.", "shell", clangFormatParams, r.clangFormat)
@@ -240,9 +241,37 @@ func (r *Registry) add(name, desc, effect string, parameters json.RawMessage, fn
 	}
 }
 
+// RegisterExternal adds a tool supplied by an external integration such as
+// MCP. External tools are deliberately registered with an explicit effect so
+// the normal Qodex approval policy still applies.
+func (r *Registry) RegisterExternal(name, desc, effect string, parameters json.RawMessage, fn func(context.Context, json.RawMessage) (Result, error)) {
+	if strings.TrimSpace(name) == "" || fn == nil {
+		return
+	}
+	r.add(name, desc, effect, parameters, fn)
+}
+
+func (r *Registry) HasTool(name string) bool {
+	_, ok := r.tools[name]
+	return ok
+}
+
 func (r *Registry) ToolSchemas() []model.ToolSchema {
+	return r.ToolSchemasFor(nil)
+}
+
+// ToolSchemasFor exposes only the tools allowed by the active skill set. A
+// nil allowlist preserves the full registry for compatibility.
+func (r *Registry) ToolSchemasFor(allowed []string) []model.ToolSchema {
+	allowedSet := make(map[string]bool, len(allowed))
+	for _, name := range allowed {
+		allowedSet[name] = true
+	}
 	names := make([]string, 0, len(r.tools))
 	for name := range r.tools {
+		if allowed != nil && !allowedSet[name] {
+			continue
+		}
 		names = append(names, name)
 	}
 	sort.Strings(names)
@@ -471,8 +500,19 @@ func splitLines(s string) []string {
 }
 
 func (r *Registry) Prompt() string {
+	return r.PromptFor(nil)
+}
+
+func (r *Registry) PromptFor(allowed []string) string {
+	allowedSet := make(map[string]bool, len(allowed))
+	for _, name := range allowed {
+		allowedSet[name] = true
+	}
 	names := make([]string, 0, len(r.tools))
 	for name := range r.tools {
+		if allowed != nil && !allowedSet[name] {
+			continue
+		}
 		names = append(names, name)
 	}
 	sort.Strings(names)

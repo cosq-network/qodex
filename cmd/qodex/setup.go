@@ -45,7 +45,7 @@ func setupCmd() *cobra.Command {
 		Long: `Walks through configuring Qodex:
 1. Choose backend (llama.cpp, vLLM, or SGLang)
 2. Download/install the backend automatically
-3. Download a model if needed
+3. Configure a model (download a GGUF for llama.cpp, or use a model ID for vLLM/SGLang)
 4. Start the model server
 5. Create configuration`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -107,25 +107,38 @@ func runSetup(projectRoot string) error {
 	fmt.Printf("Installing %s...\n", backend)
 	if err := mgr.Install(context.Background()); err != nil {
 		fmt.Printf("  ✗ Install failed: %s\n", err)
-		fmt.Println("  Continuing with manual setup...")
+		fmt.Println("  Setup stopped; no project configuration was written.")
+		return fmt.Errorf("install %s: %w", backend, err)
 	} else {
 		fmt.Printf("  ✓ %s installed\n", backend)
 	}
 
-	// Step 3: Choose/download model
+	// Step 3: Configure the model. llama.cpp consumes a local GGUF; Python
+	// backends resolve a Hugging Face model ID themselves.
 	fmt.Println("\nStep 3: Choose Model")
-	registry := model.NewModelRegistry(installRoot)
-	modelName, modelReady, err := selectSetupModel(context.Background(), reader, registry, os.Stdout, os.Stderr)
-	if err != nil {
-		fmt.Printf("  ✗ Model setup failed: %s\n", err)
-		fmt.Println("  Continuing with manual model setup...")
-	}
-	if modelName == "" {
-		modelName = readInput(reader, "qwen2.5-coder-7b-q4_k_m.gguf")
-		modelReady = registry.IsDownloaded(modelName)
-		if !modelReady {
-			printManualModelHelp(os.Stderr, modelName, registry.ModelsDir())
+	modelName := ""
+	modelReady := false
+	if backend == model.BackendLlamaCpp {
+		registry := model.NewModelRegistry(installRoot)
+		var err error
+		modelName, modelReady, err = selectSetupModel(context.Background(), reader, registry, os.Stdout, os.Stderr)
+		if err != nil {
+			fmt.Printf("  ✗ Model setup failed: %s\n", err)
+			fmt.Println("  Continuing with manual model setup...")
 		}
+		if modelName == "" {
+			modelName = readInput(reader, "qwen2.5-coder-7b-q4_k_m.gguf")
+			modelReady = registry.IsDownloaded(modelName)
+			if !modelReady {
+				printManualModelHelp(os.Stderr, modelName, registry.ModelsDir())
+			}
+		}
+	} else {
+		modelName = selectRemoteModel(reader, backend)
+		modelReady = true
+	}
+	if !modelReady {
+		return fmt.Errorf("model %q is not available; download it and rerun qodex setup", modelName)
 	}
 	mgr = model.NewManager(backend, installRoot, modelName, 0)
 	mgr.SetContextTokens(config.Defaults(projectRoot).Runtime.ContextTokens)
@@ -140,7 +153,8 @@ func runSetup(projectRoot string) error {
 		fmt.Println("Starting model server...")
 		if err := mgr.EnsureRunning(context.Background()); err != nil {
 			fmt.Printf("  ✗ Failed to start: %s\n", err)
-			fmt.Println("  You can start it manually later with: qodex serve start")
+			fmt.Println("  Setup stopped; no project configuration was written.")
+			return fmt.Errorf("start %s: %w", backend, err)
 		} else {
 			fmt.Println("  ✓ Model server running")
 		}
@@ -174,6 +188,15 @@ func runSetup(projectRoot string) error {
 	fmt.Println()
 
 	return nil
+}
+
+func selectRemoteModel(reader *bufio.Reader, backend model.Backend) string {
+	defaultModel := "Qwen/Qwen2.5-Coder-7B-Instruct"
+	if backend == model.BackendSGLang {
+		defaultModel = "Qwen/Qwen2.5-Coder-7B-Instruct"
+	}
+	fmt.Printf("Enter a Hugging Face model ID [%s]: ", defaultModel)
+	return readInput(reader, defaultModel)
 }
 
 func runExternalSetup(projectRoot string, reader *bufio.Reader) error {
@@ -257,14 +280,14 @@ func maybeRedirectUnsupportedManagedBackend(reader *bufio.Reader, backend model.
 			}
 		}
 	case model.BackendVLLM:
-		if _, err := exec.LookPath("pip"); err != nil {
+		if !hasPython() {
 			fmt.Fprintln(out, "\nvLLM requires Python and pip on this machine.")
 			if promptYesNo(reader, out, "Configure an external endpoint instead? [Y/n]: ", true) {
 				return model.BackendExternal
 			}
 		}
 	case model.BackendSGLang:
-		if _, err := exec.LookPath("pip"); err != nil {
+		if !hasPython() {
 			fmt.Fprintln(out, "\nSGLang requires Python and pip on this machine.")
 			if promptYesNo(reader, out, "Configure an external endpoint instead? [Y/n]: ", true) {
 				return model.BackendExternal
@@ -272,6 +295,15 @@ func maybeRedirectUnsupportedManagedBackend(reader *bufio.Reader, backend model.
 		}
 	}
 	return backend
+}
+
+func hasPython() bool {
+	for _, candidate := range []string{"python3", "python"} {
+		if _, err := exec.LookPath(candidate); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func writeSetupFiles(projectRoot string, cfg config.Config) error {
@@ -307,7 +339,7 @@ path = ".qodex/qodex.db"
 max_steps = 12
 `, cfg.Model.BaseURL, cfg.Model.Model, cfg.Runtime.Backend)
 
-	if err := os.WriteFile(configPath, []byte(configContent), 0o666); err != nil {
+	if err := writeAtomic(configPath, []byte(configContent), 0o666); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 	fmt.Printf("  ✓ Created %s\n", configPath)
@@ -321,11 +353,47 @@ Use this skill for repository-specific conventions.
 - Run the smallest relevant test command before broader test suites.
 - Summarize changed files and verification at the end.
 `
-	if err := os.WriteFile(skillPath, []byte(skillContent), 0o666); err != nil {
+	if err := writeAtomic(skillPath, []byte(skillContent), 0o666); err != nil {
 		return fmt.Errorf("write skill: %w", err)
 	}
 	fmt.Printf("  ✓ Created %s\n", skillPath)
 	return nil
+}
+
+func writeAtomic(path string, data []byte, mode os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".qodex-write-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err == nil {
+		return nil
+	} else if runtimepkg.GOOS != "windows" {
+		return err
+	}
+	// Windows cannot replace an existing file with RenameFile. The temporary
+	// file still prevents a partially-written destination; replace the exact
+	// setup target and retry.
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 func selectSetupModel(ctx context.Context, reader *bufio.Reader, registry setupModelSource, out, errOut io.Writer) (string, bool, error) {

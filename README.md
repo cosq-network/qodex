@@ -2,7 +2,7 @@
 
 Qodex is a local-first coding agent CLI written in Go. It uses a terminal UI with streaming token rendering, an OpenAI-compatible local model endpoint, and a single locally hosted Qwen Coder model by default.
 
-The intended runtime is `llama.cpp`, and Qodex manages backend installation and model downloads itself during `qodex setup` on Linux and macOS. On Windows, WSL2 is the recommended path for managed local backends; native Windows can still target a manually managed OpenAI-compatible endpoint. Other backends such as vLLM and SGLang can be selected as advanced runtime options without changing the agent core. Backend capability detection is performed at startup to enable streaming when supported.
+The intended runtime is `llama.cpp`, and Qodex manages backend installation and catalog GGUF model downloads during `qodex setup` on Linux and macOS. vLLM and SGLang use Hugging Face model IDs and resolve model storage through their own runtimes. On Windows, WSL2 is the recommended path for managed local backends; native Windows can still target a manually managed OpenAI-compatible endpoint. Backend capability detection is performed at startup to enable streaming when supported.
 
 ## Current Status
 
@@ -12,17 +12,21 @@ The repository includes a fully featured coding agent with:
 - Bubble Tea terminal chat UI with streaming token rendering, inline diff preview, spinner, error panel, and multi-line input with `@` file autocomplete.
 - OpenAI-compatible `/v1/chat/completions` client with SSE streaming and capability detection.
 - Prompt-based JSON tool calling with validation repair loop and optional native OpenAI `tools`/`tool_calls` support.
-- 90 built-in tools covering file/symbol search, LSP code intelligence, Git, CMake/clang/make/.NET/Java toolchains, package managers, language runtimes, archives, Docker/QEMU, ADB, and system administration.
+- 98 built-in tools covering file/symbol search, LSP code intelligence, Git workflows, CMake/clang/make/.NET/Java toolchains, package managers, language runtimes, archives, Docker/QEMU, ADB, and system administration.
 - 31 built-in skills shipped with Qodex covering project conventions, git, go-testing, cmake, clang, make, curl, wget, java, rg, sed, base64, node, npm, npx, nvm, dotnet, nuget, msbuild, nmake, system packages, python, pip, conda, flutter, dart, archives, system admin, docker, qemu, and adb.
 - Skill system: `skill.toml` metadata (triggers, allowed_tools, context_budget, scripts), model-assisted or heuristic skill routing (`agent.skill_routing`), section-aware context slicing, and pre-approved script policy with provenance tracking.
 - SQLite session/tool event storage with WAL mode, migrations, and approval persistence.
 - Session resume with full tool history reconstruction (TUI via `sessions resume`, non-interactive via `run --session`), plus JSON export.
 - Approval gates for write, shell, and network tools with inline diff preview and `--yes` auto-approval.
+- MCP stdio client support: configured MCP servers contribute namespaced tools while retaining Qodex approval and audit behavior.
+- Interoperable repository instructions from `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, Cursor rules, and GitHub Copilot instructions.
 - Planning state tracking (current task, inspected files, actions taken) in the system prompt.
 - Context compaction (keeps the last 8 messages when approaching the token limit).
 - LCS-based unified diff generation for write tool previews.
 - LSP integration (`gopls`, `pyright`, `typescript-language-server`, `rust-analyzer`) for diagnostics, definitions, and references.
-- Managed model server lifecycle: install the backend, download GGUF models, and start/stop/status the server from the CLI. Downloads resume interrupted transfers, report live progress, and validate the GGUF header. llama.cpp starts with the configured context size and CPU thread count.
+- Managed model server lifecycle: install the backend, acquire the backend-appropriate model, and start/stop/status the server from the CLI. Catalog GGUF downloads resume interrupted transfers, report live progress, and validate the GGUF header. Managed startup waits for `/v1/models` readiness, cleans stale runtime state, and llama.cpp starts with the configured context size and CPU thread count.
+- Hardened setup flow: setup uses backend-specific model contracts, writes configuration atomically only after required setup succeeds, and pins the managed llama.cpp release. `QODEX_LLAMA_CPP_VERSION` overrides the release; `QODEX_LLAMA_CPP_SHA256` optionally verifies its archive.
+- Hardening coverage: stalled MCP calls honor context deadlines, MCP name collisions fail closed, Git path-scoped commits avoid unrelated staged files, Git snapshots stay ignored, and managed Windows PID checks verify process liveness.
 
 ## CLI Reference
 
@@ -41,7 +45,7 @@ Global flags (available on every command):
 
 | Command | Description |
 |---------|-------------|
-| `setup` | Interactive first-time setup wizard: choose a backend (llama.cpp, vLLM, SGLang, or external), install it, pick/download a model, start the server, and write `.qodex/config.toml` |
+| `setup` | Interactive first-time setup wizard: choose a backend, install it, select a GGUF or enter a Hugging Face model ID, wait for server readiness, and write `.qodex/config.toml` only after successful setup |
 | `init` | Create project-local configuration and a starter skill (`--force` overwrites) |
 | `config list` | Print the effective configuration as `key=value` |
 | `config get KEY` | Print one effective configuration value |
@@ -95,27 +99,29 @@ Unknown keys are rejected, and a project file inherits anything not set from use
 | `agent.skill_routing` | `auto` | Skill selection: `auto` (heuristic) or `model` (model-assisted with heuristic fallback) |
 | `agent.tool_calls` | `prompt` | Tool-call mechanism: `prompt` (inline JSON) or `native` (OpenAI `tools`/`tool_calls`; streaming disabled) |
 
+MCP servers can be configured under `[mcp.servers.<name>]` with `command`, `args`, `env`, and optional `enabled = false`. See [MCP Integration](docs/mcp.md).
+
 Example configs are in [`examples/`](examples/).
 
 ## Built-in Tools
 
-90 tools are registered and categorized by effect, which drives the approval policy:
+98 tools are registered and categorized by effect, which drives the approval policy:
 
 | Effect | Policy | Count |
 |--------|--------|-------|
-| `read` | Auto-approved | 20 |
-| `write` | Per `approval.write_files` | 3 |
+| `read` | Auto-approved | 21 |
+| `write` | Per `approval.write_files` | 11 |
 | `shell` | Per `approval.run_commands` | 49 |
 | `network` | Per `approval.network` | 15 |
 | `destructive` | Always denied | 3 |
 
 ### Read (auto-approved)
 
-`list_files`, `read_file`, `search_text`, `rg_search`, `grep_search`, `find_files`, `tail_file`, `ps_list`, `git_status`, `git_diff`, `git_log`, `review_changes`, `project_index`, `lsp_diagnostics`, `lsp_definition`, `lsp_find_references`, `ar_list`, `tar_list`, `zip_list`, `adb_devices`
+`list_files`, `read_file`, `search_text`, `rg_search`, `grep_search`, `find_files`, `tail_file`, `ps_list`, `git_status`, `git_diff`, `git_log`, `git_workspace_summary`, `review_changes`, `project_index`, `lsp_diagnostics`, `lsp_definition`, `lsp_find_references`, `ar_list`, `tar_list`, `zip_list`, `adb_devices`
 
 ### Write
 
-`write_file`, `write_patch`, `sed_edit`
+`write_file`, `write_patch`, `sed_edit`, `git_stage`, `git_commit`, `git_branch`, `git_worktree`, `git_undo`, `git_snapshot`, `git_restore_snapshot`
 
 ### Shell
 
@@ -147,7 +153,7 @@ Approval requests show a summary and, for writes, an inline LCS-based unified di
 
 `adb`, `archives`, `base64`, `clang`, `cmake`, `conda`, `curl`, `dart`, `docker`, `dotnet`, `flutter`, `git`, `go-testing`, `java`, `make`, `msbuild`, `nmake`, `node`, `npm`, `npx`, `nuget`, `nvm`, `pip`, `project`, `python`, `qemu`, `rg`, `sed`, `system-admin`, `system-packages`, `wget`
 
-Each skill is a directory with a `SKILL.md` plus a `skill.toml` declaring `name`, `description`, `version`, `triggers`, `allowed_tools`, and optional `scripts` (pre-approved shell snippets executed through `run_script` with `skill:<name>/script:<desc>` provenance). Skill context budgets use the `context_budget` key, with `context_budget_tokens` accepted as a legacy alias. The `project` skill is always loaded first. Routing selects up to 3 skills heuristically (keyword/trigger matching, plus explicit `/skill <name>` prompts) or up to 2 via the model when `agent.skill_routing = "model"`. Skills are instructions, not authority — they cannot bypass validation or approval policy.
+Each skill is a directory with a `SKILL.md` plus a `skill.toml` declaring `name`, `description`, `version`, `triggers`, `allowed_tools`, and optional `scripts` (pre-approved shell snippets executed through `run_script` with `skill:<name>/script:<desc>` provenance). Skill context budgets use the `context_budget` key, with `context_budget_tokens` accepted as a legacy alias. The `allowed_tools` field also acts as a tool-pack boundary: specialized tools are exposed to the model only when the relevant skill is active. The `project` skill is always loaded first. Routing selects up to 3 skills heuristically (keyword/trigger matching, plus explicit `/skill <name>` prompts) or up to 2 via the model when `agent.skill_routing = "model"`. Skills are instructions, not authority — they cannot bypass validation or approval policy.
 
 ## Agent Loop
 
@@ -197,6 +203,7 @@ If a server is not installed, the tool returns installation instructions.
 - [User Guide](docs/user-guide.md)
 - [Developer Guide](docs/developer-guide.md)
 - [Tool Calling And Skills](docs/tool-calling-and-skills.md)
+- [MCP Integration](docs/mcp.md)
 - [Security Model](docs/security-model.md)
 - [llama.cpp Setup Guide](docs/llama-cpp-setup.md)
 - [GitHub Release Pipeline Setup](docs/github-release-setup.md)
@@ -414,11 +421,11 @@ The CLI should treat this as an OpenAI-compatible base URL and should not requir
 
 Run `qodex` without arguments for the first time to trigger the interactive setup wizard, which will:
 1. Choose a backend (llama.cpp, vLLM, SGLang, or an external endpoint)
-2. Install the backend automatically
-3. Select a model from the known list or enter one manually
-4. Download the model with `qodex models download <model-name>` (progress is reported live, and interrupted downloads resume from where they stopped) or place it in the models directory if it is not already present
-5. Start the model server
-6. Create project configuration
+2. Install the backend automatically where supported
+3. Select a catalog GGUF model for llama.cpp, or enter a Hugging Face model ID for vLLM/SGLang
+4. Download a llama.cpp model with `qodex models download <model-name>` (progress is reported live, interrupted downloads resume, and the GGUF header is validated), while Python backends acquire models through their own runtimes
+5. Start the model server and wait for its `/v1/models` endpoint
+6. Create project configuration only after the managed setup succeeds
 
 For prompts that may write files or run commands:
 
