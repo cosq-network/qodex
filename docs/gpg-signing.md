@@ -25,7 +25,7 @@ The public tag workflow is .github/workflows/release.yml. It:
 5. Runs GoReleaser with the configured fingerprint.
 6. Signs every configured artifact, including the checksum file.
 7. Verifies checksums and signatures before publishing.
-8. Uploads gpg-public-key.asc to the GitHub Release.
+8. Exports gpg-public-key.asc into the runner's temporary directory and uploads it to the GitHub Release.
 
 The workflow requires these repository secrets:
 

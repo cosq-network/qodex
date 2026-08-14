@@ -86,7 +86,7 @@ Merging the release PR creates and pushes the next `v*` tag automatically. That 
 4. Runs `go test -race -count=1 ./...`.
 5. Runs GoReleaser.
 6. Publishes archives, Linux packages, checksums, and signatures to GitHub Releases.
-7. Uploads `gpg-public-key.asc`.
+7. Exports `gpg-public-key.asc` into the runner's temporary directory and uploads it without changing the Git checkout.
 
 ### 4. Verify the release
 

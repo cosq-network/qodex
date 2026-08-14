@@ -100,7 +100,10 @@ jobs:
           fingerprint: ${{ secrets.GPG_FINGERPRINT }}
 
       - name: Export public signing key
-        run: gpg --armor --export "${GPG_FINGERPRINT}" > gpg-public-key.asc
+        run: |
+          public_key="${RUNNER_TEMP}/qodex-gpg-public-key.asc"
+          gpg --armor --export "${GPG_FINGERPRINT}" > "${public_key}"
+          test -s "${public_key}"
         env:
           GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
 
@@ -128,4 +131,4 @@ jobs:
       - name: Upload public signing key
         uses: softprops/action-gh-release@v2
         with:
-          files: gpg-public-key.asc
+          files: ${{ runner.temp }}/qodex-gpg-public-key.asc
