@@ -9,7 +9,7 @@ The intended runtime is `llama.cpp`, and Qodex manages backend installation and 
 The repository includes a fully featured coding agent with:
 
 - Cobra CLI commands: `setup`, `init`, `config`, `chat`, `run`, `review`, `doctor`, `skills`, `sessions`, `serve`, `up`, `down`, `status`, `models`, `reset`, `version`, and `completion`.
-- Bubble Tea terminal chat UI with streaming token rendering, inline diff preview, spinner, error panel, and multi-line input with `@` file autocomplete.
+- Bubble Tea terminal chat UI with streaming token rendering, inline diff preview, spinner, error panel, responsive sizing, framed multi-line input, `@` file autocomplete, and `/` command autocomplete.
 - OpenAI-compatible `/v1/chat/completions` client with SSE streaming and capability detection.
 - Prompt-based JSON tool calling with validation repair loop and optional native OpenAI `tools`/`tool_calls` support.
 - 98 built-in tools covering file/symbol search, LSP code intelligence, Git workflows, CMake/clang/make/.NET/Java toolchains, package managers, language runtimes, archives, Docker/QEMU, ADB, and system administration.
@@ -167,6 +167,8 @@ Each skill is a directory with a `SKILL.md` plus a `skill.toml` declaring `name`
 ### TUI slash commands
 
 The interactive TUI provides `/help`, `/skills [FILTER]`, `/plan`, and `/compact` for local help, skill discovery, planning state, and context management. `/mcp [NAME]` runs MCP diagnostics. `/commit [MESSAGE]` and `/undo [COMMIT]` ask the agent to perform focused Git operations through the normal approval and audit workflow. Existing `/skill <name>` prompts remain supported for explicit skill routing.
+
+The TUI is designed for long-running coding sessions: the viewport and input resize with the terminal, active work shows a contextual status label, approval prompts provide explicit keyboard guidance, `Esc` cancels the current interaction without quitting, and tool events use compact status markers for quick scanning. Use `Ctrl+J` for a newline in the composer.
 
 ## Sessions and Storage
 

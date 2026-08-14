@@ -10,7 +10,7 @@ This document is a historical implementation roadmap plus a current-state harden
 
 ## Current Snapshot
 
-Qodex has a working Go MVP with Cobra CLI commands, a Bubble Tea TUI with streaming token rendering and diff preview, OpenAI-compatible chat completions with SSE streaming support, prompt-based and native tool calling, local tools, local skills, SQLite persistence, session resume with tool history reconstruction, context compaction, session export, review mode, project indexing, LSP-backed navigation tools, and backend capability detection.
+Qodex has a working Go MVP with Cobra CLI commands, a polished Bubble Tea TUI with streaming token rendering, diff preview, responsive layout, command/file autocomplete, contextual status feedback, and inline approvals, OpenAI-compatible chat completions with SSE streaming support, prompt-based and native tool calling, local tools, local skills, SQLite persistence, session resume with tool history reconstruction, context compaction, session export, review mode, project indexing, LSP-backed navigation tools, and backend capability detection.
 
 As of August 14, 2026, the repo also reflects the following recent hardening work:
 
@@ -38,6 +38,7 @@ As of August 14, 2026, the repo also reflects the following recent hardening wor
 - Windows managed-process status checks validate process exit state instead of trusting PID existence alone
 - regression tests cover the new MCP, Git workflow, instruction, and tool-pack boundaries; focused tests and vet pass, with broader runtime checks still dependent on host capabilities
 - MCP diagnostics now report command installation, secret-backed authentication readiness, protocol health, server identity, tool count, and advertised capabilities
+- TUI interaction polish now includes responsive viewport sizing, a framed multi-line composer, slash-command autocomplete, contextual busy labels, clearer approval guidance, and non-destructive `Esc` cancellation
 
 ## Phase 0: Foundation MVP
 
@@ -126,7 +127,8 @@ Goal: move from a functional chat screen to an interactive coding-agent interfac
 | completed | Interactive approval panel | TUI/Safety | Allows approve/deny from the TUI; diff preview now shown before approval. |
 | completed | Diff viewer | TUI/Tools | Inspect `write_patch` and `write_file` changes before approval. |
 | completed | Better error panel | TUI | Show model/tool errors without losing chat context, with persistent error status bar. |
-| completed | TUI model tests | Testing | Approval key handling, busy state, resume rendering, and diff rendering have coverage. |
+| completed | Professional interaction polish | TUI/UX | Responsive layout, framed multi-line composer, `/` command autocomplete, contextual activity labels, clearer keyboard guidance, compact event markers, and `Esc` cancellation. |
+| completed | TUI model tests | Testing | Approval key handling, busy state, resume rendering, diff rendering, command autocomplete, and non-quitting cancellation have coverage. |
 
 ## Phase 3: Session Intelligence And Context
 

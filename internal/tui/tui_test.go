@@ -102,6 +102,21 @@ func TestBusyEnterIgnored(t *testing.T) {
 	}
 }
 
+func TestEscapeCancelsWithoutQuitting(t *testing.T) {
+	model := New(agent.New(agent.Options{}))
+	cancelled := false
+	model.busy = true
+	model.runCancel = func() { cancelled = true }
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	model = updated.(Model)
+	if cmd != nil {
+		t.Fatal("expected escape to cancel without quitting")
+	}
+	if !cancelled || model.runCancel != nil {
+		t.Fatal("expected active run cancellation")
+	}
+}
+
 func TestSlashCommands(t *testing.T) {
 	model := New(agent.New(agent.Options{}))
 	tests := []struct {
@@ -272,6 +287,32 @@ func TestAutocompleteDismissWithEscape(t *testing.T) {
 	model = updated.(Model)
 	if model.autoShow {
 		t.Fatal("expected autocomplete dismissed on escape")
+	}
+}
+
+func TestCommandAutocomplete(t *testing.T) {
+	model := New(agent.New(agent.Options{}))
+	model.input.SetValue("/he")
+	model.updateAutocomplete()
+	if !model.autoShow || model.autoKind != "command" {
+		t.Fatalf("expected command autocomplete, got show=%v kind=%q", model.autoShow, model.autoKind)
+	}
+	if len(model.matches) != 1 || model.matches[0] != "/help" {
+		t.Fatalf("unexpected command matches: %v", model.matches)
+	}
+	model.selectAutocomplete()
+	if got := model.input.Value(); got != "/help " {
+		t.Fatalf("selected command = %q, want /help ", got)
+	}
+}
+
+func TestCommandAutocompletePreservesArguments(t *testing.T) {
+	model := New(agent.New(agent.Options{}))
+	model.input.SetValue("/com existing")
+	model.updateAutocomplete()
+	model.selectAutocomplete()
+	if got := model.input.Value(); got != "/compact existing" {
+		t.Fatalf("selected command = %q, want preserved argument", got)
 	}
 }
 

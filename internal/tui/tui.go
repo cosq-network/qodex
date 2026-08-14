@@ -31,6 +31,7 @@ type Model struct {
 	spinner      spinner.Model
 	history      []string
 	busy         bool
+	busyLabel    string
 	lastErr      string
 	width        int
 	height       int
@@ -47,6 +48,7 @@ type Model struct {
 	matchIdx     int
 	autoShow     bool
 	autoQuery    string
+	autoKind     string
 
 	onQuit    func()
 	runCancel context.CancelFunc
@@ -77,17 +79,19 @@ type filesLoadedMsg []string
 type spinnerTickMsg spinner.TickMsg
 
 var (
-	headerStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
-	userStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
-	aiStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81"))
-	toolStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("105"))
-	approvalStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
-	errorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	helpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	diffStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("82"))
-	autoStyle     = lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("255"))
-	autoSelStyle  = lipgloss.NewStyle().Background(lipgloss.Color("39")).Foreground(lipgloss.Color("0"))
-	spinnerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	headerStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
+	userStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
+	aiStyle         = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81"))
+	toolStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("105"))
+	approvalStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
+	errorStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	helpStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	diffStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("82"))
+	autoStyle       = lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("255"))
+	autoSelStyle    = lipgloss.NewStyle().Background(lipgloss.Color("39")).Foreground(lipgloss.Color("0"))
+	spinnerStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	inputFrameStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("238")).Padding(0, 1)
+	statusBarStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
 )
 
 func New(agent *agent.Agent) Model {
@@ -122,7 +126,7 @@ func newModel(a *agent.Agent, messages []store.Message, autoApprove bool) Model 
 	vp := viewport.New(80, 24)
 	history := []string{
 		headerStyle.Render("Qodex"),
-		helpStyle.Render("Local coding agent. Enter submits. Ctrl+C quits. Approve tool requests with y or n."),
+		helpStyle.Render("Local coding agent  •  Enter to submit  •  Ctrl+C to quit  •  y/n for approvals"),
 	}
 	for _, msg := range messages {
 		switch msg.Role {
@@ -184,14 +188,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.input.SetWidth(max(20, msg.Width-4))
-		m.viewport.Width = msg.Width
-		m.viewport.Height = max(5, msg.Height-6)
+		m.viewport.Width = max(20, msg.Width)
+		m.viewport.Height = max(5, msg.Height-m.input.Height()-4)
 		m.refresh()
 		return m, nil
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "esc":
+		case "ctrl+c":
 			if m.pending != nil {
 				m.pending.reply <- false
 				m.pending = nil
@@ -208,6 +212,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.onQuit()
 			}
 			return m, tea.Quit
+
+		case "esc":
+			if m.pending != nil {
+				m.pending.reply <- false
+				m.pending = nil
+				m.history = append(m.history, approvalStyle.Render("Approval cancelled."))
+				m.refresh()
+				return m, nil
+			}
+			if m.autoShow {
+				m.clearAutocomplete()
+				return m, nil
+			}
+			if m.runCancel != nil {
+				m.runCancel()
+				m.runCancel = nil
+				return m, nil
+			}
+			return m, nil
 
 		case "y", "Y":
 			if m.pending != nil {
@@ -292,6 +315,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				prompt = actionPrompt
 			}
 			m.busy = true
+			m.busyLabel = "Running agent"
 			m.lastErr = ""
 			m.streamBuffer.Reset()
 			m.history = append(m.history, "", userStyle.Render("You:"), prompt, "", aiStyle.Render("Qodex:"), "")
@@ -346,6 +370,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case responseMsg:
 		m.busy = false
+		m.busyLabel = ""
 		if m.runCancel != nil {
 			m.runCancel()
 			m.runCancel = nil
@@ -374,6 +399,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case slashResultMsg:
 		m.busy = false
+		m.busyLabel = ""
 		if msg.err != nil {
 			m.history = append(m.history, errorStyle.Render("Error: "+msg.err.Error()))
 		} else {
@@ -408,6 +434,7 @@ func (m *Model) handleSlashCommand(input string) (handled bool, immediate string
 		return true, slashHelp(), ""
 	case "/skills":
 		m.busy = true
+		m.busyLabel = "Discovering skills"
 		return true, "", "__slash_skills:" + args
 	case "/plan":
 		return true, m.agent.PlanSummary(), ""
@@ -416,6 +443,7 @@ func (m *Model) handleSlashCommand(input string) (handled bool, immediate string
 		return true, helpStyle.Render("Conversation context compacted."), ""
 	case "/mcp":
 		m.busy = true
+		m.busyLabel = "Diagnosing MCP servers"
 		return true, "", "__slash_mcp:" + args
 	case "/commit":
 		if args == "" {
@@ -525,11 +553,15 @@ func runSlashMCP(a *agent.Agent, only string) tea.Cmd {
 func (m Model) View() string {
 	status := ""
 	if m.busy {
-		status = m.spinner.View() + helpStyle.Render(" Running agent...")
+		label := m.busyLabel
+		if label == "" {
+			label = "Running agent"
+		}
+		status = m.spinner.View() + helpStyle.Render(" "+label+"…  (Esc cancels)")
 	} else if m.pending != nil {
-		status = approvalStyle.Render("Approval pending: y approve | n deny | Ctrl+C quit")
+		status = approvalStyle.Render("Approval pending  •  y approve  •  n deny  •  Esc cancel")
 	} else {
-		status = helpStyle.Render("Enter submit | /help commands | Ctrl+C quit | @ reference files")
+		status = statusBarStyle.Render("Enter submit  •  Ctrl+J newline  •  @ files  •  / commands  •  Ctrl+C quit")
 	}
 	if m.lastErr != "" && !m.busy && m.pending == nil {
 		status = errorStyle.Render("Last error: "+compact(m.lastErr, 80)) + "\n" + status
@@ -552,12 +584,17 @@ func (m Model) View() string {
 		autoView = b.String()
 	}
 
+	inputWidth := max(20, m.width-2)
+	if m.width == 0 {
+		inputWidth = 78
+	}
+	inputView := inputFrameStyle.Width(inputWidth).Render(m.input.View())
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		m.viewport.View(),
 		autoView,
 		status,
-		m.input.View(),
+		inputView,
 	)
 }
 
@@ -567,10 +604,28 @@ func (m *Model) refresh() {
 }
 
 func (m *Model) updateAutocomplete() {
-	if !m.filesLoaded || m.projectFiles == nil {
+	val := m.input.Value()
+	trimmed := strings.TrimSpace(val)
+	commandToken := ""
+	if fields := strings.Fields(trimmed); len(fields) > 0 {
+		commandToken = fields[0]
+	}
+	if strings.HasPrefix(commandToken, "/") {
+		query := strings.ToLower(strings.TrimPrefix(commandToken, "/"))
+		m.autoQuery = query
+		m.matches = matchCommands(query)
+		m.autoKind = "command"
+		m.autoShow = len(m.matches) > 0
+		m.matchIdx = 0
+		if !m.autoShow {
+			m.clearAutocomplete()
+		}
 		return
 	}
-	val := m.input.Value()
+	if !m.filesLoaded || m.projectFiles == nil {
+		m.clearAutocomplete()
+		return
+	}
 	query := extractAutoQuery(val)
 	if query == "" {
 		m.clearAutocomplete()
@@ -580,6 +635,7 @@ func (m *Model) updateAutocomplete() {
 		return
 	}
 	m.autoQuery = query
+	m.autoKind = "file"
 	m.matches = matchFiles(m.projectFiles, query)
 	if len(m.matches) > 10 {
 		m.matches = m.matches[:10]
@@ -592,9 +648,24 @@ func (m *Model) updateAutocomplete() {
 	m.matchIdx = 0
 }
 
+func matchCommands(query string) []string {
+	commands := []string{"/help", "/skills", "/plan", "/compact", "/mcp", "/commit", "/undo", "/skill"}
+	if query == "" {
+		return commands
+	}
+	var matches []string
+	for _, command := range commands {
+		if strings.HasPrefix(strings.TrimPrefix(command, "/"), query) {
+			matches = append(matches, command)
+		}
+	}
+	return matches
+}
+
 func (m *Model) clearAutocomplete() {
 	m.autoShow = false
 	m.autoQuery = ""
+	m.autoKind = ""
 	m.matches = nil
 	m.matchIdx = -1
 }
@@ -606,6 +677,15 @@ func (m *Model) selectAutocomplete() {
 	}
 	selected := m.matches[m.matchIdx]
 	val := m.input.Value()
+	if m.autoKind == "command" {
+		if end := strings.IndexAny(val, " \t\n"); end >= 0 {
+			m.input.SetValue(selected + val[end:])
+		} else {
+			m.input.SetValue(selected + " ")
+		}
+		m.clearAutocomplete()
+		return
+	}
 	atIdx := strings.LastIndex(val, "@")
 	if atIdx < 0 {
 		m.clearAutocomplete()
@@ -674,30 +754,30 @@ func waitForStream(ch <-chan string) tea.Cmd {
 func renderEvent(event agent.Event) string {
 	switch event.Type {
 	case "context_compacted":
-		return helpStyle.Render(compact(event.Summary, 80))
+		return helpStyle.Render("· " + compact(event.Summary, 120))
 	case "tool_requested":
-		text := toolStyle.Render(fmt.Sprintf("Tool requested [%s]: %s", event.Effect, compact(event.Summary, 500)))
+		text := toolStyle.Render(fmt.Sprintf("→ Tool requested [%s]: %s", event.Effect, compact(event.Summary, 500)))
 		if event.Detail != "" {
 			text += "\n" + diffStyle.Render(compact(event.Detail, 1000))
 		}
 		return text
 	case "approval_requested":
-		text := approvalStyle.Render(fmt.Sprintf("Approval requested [%s]", event.Effect))
+		text := approvalStyle.Render(fmt.Sprintf("! Approval requested [%s]", event.Effect))
 		if event.Detail != "" {
 			text += "\n" + diffStyle.Render(compact(event.Detail, 1000))
 		}
 		return text
 	case "approval_approved":
-		return approvalStyle.Render(fmt.Sprintf("Approval granted [%s]", event.Effect))
+		return approvalStyle.Render(fmt.Sprintf("✓ Approval granted [%s]", event.Effect))
 	case "approval_denied":
-		return approvalStyle.Render(fmt.Sprintf("Approval denied [%s]", event.Effect))
+		return approvalStyle.Render(fmt.Sprintf("× Approval denied [%s]", event.Effect))
 	case "tool_completed":
-		return toolStyle.Render(fmt.Sprintf("Tool completed: %s", compact(event.Summary, 500)))
+		return toolStyle.Render(fmt.Sprintf("✓ Tool completed: %s", compact(event.Summary, 500)))
 	case "tool_failed":
 		if event.Error != "" {
-			return errorStyle.Render(fmt.Sprintf("Tool failed: %s", compact(event.Error, 500)))
+			return errorStyle.Render(fmt.Sprintf("× Tool failed: %s", compact(event.Error, 500)))
 		}
-		return errorStyle.Render(fmt.Sprintf("Tool failed: %s", compact(event.Summary, 500)))
+		return errorStyle.Render(fmt.Sprintf("× Tool failed: %s", compact(event.Summary, 500)))
 	default:
 		return toolStyle.Render(compact(event.Summary, 500))
 	}
