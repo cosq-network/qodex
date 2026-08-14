@@ -1,14 +1,42 @@
-# User Guide
+# Qodex User Guide
 
-Qodex is a local terminal coding assistant. It runs against a locally hosted Qwen Coder model through `llama.cpp`, `vLLM`, or `SGLang`.
+Qodex is a local-first terminal coding agent for software development. It combines an OpenAI-compatible model endpoint, an auditable tool runtime, a Bubble Tea terminal UI, repository instructions, skills, MCP servers, and SQLite-backed sessions.
+
+This guide covers installation, model backends, configuration, daily workflows, approvals, tools, skills, MCP, Git, sessions, troubleshooting, and cross-platform operation. For implementation details, see the [Developer Guide](developer-guide.md). For tool and skill internals, see [Tool Calling and Skills](tool-calling-and-skills.md). For MCP-specific configuration, see [MCP Integration](mcp.md).
+
+Qodex is not a sandbox or a security boundary. Review commands, diffs, network destinations, and MCP permissions before approving them.
 
 ## What You Need
 
-- A working Go-built `qodex` binary.
+- A working `qodex` binary, either from a release or built with Go.
 - A terminal with true color support.
 - `ripgrep` and `git` installed for the best experience.
 
-Qodex manages backend installation automatically on Linux and macOS. Model downloads are available through `qodex models download`, and the setup wizard helps you select a model but does not automatically fetch every model choice. On Windows, WSL2 is the recommended path for managed local backends; native Windows can still connect to a manually managed OpenAI-compatible endpoint. Run `qodex` or `qodex setup` for the interactive wizard.
+Qodex manages backend installation automatically on Linux and macOS. Model downloads are available through `qodex models download`, and the setup wizard helps you select a model. On Windows, WSL2 is the recommended path for managed local backends; native Windows can still connect to a manually managed OpenAI-compatible endpoint. Run `qodex` or `qodex setup` for the interactive wizard.
+
+## Quick Start
+
+```sh
+cd path/to/project
+qodex version
+qodex setup
+qodex doctor
+qodex chat
+```
+
+Start with a read-only prompt so the agent can establish context:
+
+```text
+Explain this repository structure, identify the test command, and report uncommitted changes. Do not edit files.
+```
+
+Then give a bounded task with acceptance criteria:
+
+```text
+Add validation for empty project names. Inspect existing conventions first, implement the smallest change, run focused tests, and summarize changed files and verification.
+```
+
+For a one-shot request, use `qodex run "..."`. Use `qodex review` to analyze uncommitted changes.
 
 ## System Requirements
 
@@ -86,12 +114,14 @@ Smaller models are useful for testing the app, but they will make more mistakes 
 
 Run `qodex` without arguments for the first time, or run `qodex setup` explicitly, to start the interactive setup wizard:
 
-1. **Choose Backend** — Select `llama.cpp` (default), `vLLM`, or `SGLang`
+1. **Choose Backend** — Select `llama.cpp` (default), `vLLM`, `SGLang`, or an external endpoint
 2. **Install Backend** — On Linux and macOS, Qodex installs llama.cpp automatically. vLLM and SGLang use the selected Python interpreter's `pip`; on Windows, use WSL2 for managed installs or configure a backend manually.
 3. **Choose Model** — For llama.cpp, select a catalog GGUF model. For vLLM/SGLang, enter a Hugging Face model ID.
 4. **Acquire Model** — llama.cpp models can be downloaded with `qodex models download <model-name>`; Python backends download the model through their own runtime.
 5. **Start Server** — Qodex waits for the backend's `/v1/models` endpoint to become ready.
 6. **Create Config** — Only after required installation, model acquisition, and server startup succeed, writes `.qodex/config.toml` and a starter project skill.
+
+If setup fails, correct the reported dependency, model, or endpoint problem and run `qodex doctor`. Use `qodex init` when you want project files without installing a backend.
 
 After setup, use these commands to manage the model server:
 
@@ -203,7 +233,7 @@ In addition to user and project skills, Qodex ships with built-in skills that ar
 - `archives`, `system-admin` — Archive handling and system administration.
 - `docker`, `qemu`, `adb` — Container, VM, and Android device management.
 
-Built-in skills are embedded at compile time. They can be overridden by placing a skill with the same name in your project's `.qodex/skills/` or user-level `~/.config/qodex/skills/` directory.
+Built-in skills are embedded at compile time. They can be overridden by placing a skill with the same name in your project's `.qodex/skills/` or platform user-level Qodex skills directory.
 
 ## LSP Tools (Diagnostics, Definitions, References)
 
@@ -300,7 +330,7 @@ install dependencies
 use network commands
 ```
 
-Review command text and file change details before approving them. A richer diff viewer is planned.
+Review command text and file change details before approving them. The TUI shows compact diffs with expandable details and records the decision in the session audit stream.
 
 ## Skills
 
@@ -315,7 +345,7 @@ Project skills live in:
 User-wide skills live in:
 
 ```text
-~/.config/qodex/skills/
+<user-config>/qodex/skills/
 ```
 
 Example:
@@ -335,18 +365,25 @@ Run the failing tests and fix the issue.
 
 ## TUI slash commands
 
-The interactive TUI supports `/help`, `/skills [FILTER]`, `/plan`, `/compact`, `/mcp [NAME]`, `/commit [MESSAGE]`, and `/undo [COMMIT]`. Git commands are translated into normal agent requests, so configured approval and audit policies still apply. `/skill <name>` remains available for explicit skill routing.
+The interactive TUI supports `/help`, `/model`, `/session`, `/clear`, `/export`, `/theme`, `/settings`, `/jump [CATEGORY]`, `/skills [FILTER]`, `/plan`, `/compact`, `/mcp [NAME]`, `/commit [MESSAGE]`, and `/undo [COMMIT]`. Git commands are translated into normal agent requests, so configured approval and audit policies still apply. `/skill <name>` remains available for explicit skill routing.
+
+`/jump` accepts `user`, `tool`, `approval`, or `error`. `/export` copies formatted JSON to the clipboard. The command palette is available with `Ctrl+P`; transcript search uses `Ctrl+F`, `Ctrl+N` moves to the next match, `Ctrl+Y` copies selected output, and `Ctrl+O` collapses verbose tool details. `Ctrl+J` inserts a newline and `Esc` cancels the current interaction.
+
+The task status area reports the current task, active skill, current tool, inspected-file count, step count, elapsed time, context usage, and compaction status.
 
 ## Sessions
 
 Qodex keeps MVP session history in SQLite at `.qodex/qodex.db` by default. You can list and resume sessions.
 
-Expected commands:
+Use these commands:
 
 ```sh
 qodex sessions list
 qodex sessions resume <id>
+qodex sessions export <id> > session.json
 ```
+
+Session data can contain prompts, source snippets, command output, file paths, and approval decisions. Protect the database and treat exports as sensitive.
 
 ## Reset
 
@@ -358,11 +395,13 @@ qodex reset
 
 This deletes the `.qodex/` directory (project config, database with session history, and skills). It prompts for confirmation unless `--force`/`-f` is passed.
 
-To also remove the global `~/.config/qodex/` directory (user-level config and skills):
+To also remove the global Qodex user directory (user-level config, skills, backend data, and model cache):
 
 ```sh
 qodex reset --all
 ```
+
+The user directory is platform-native: `$XDG_CONFIG_HOME/qodex` or `~/.config/qodex` on Unix, and `%APPDATA%\\qodex` on Windows. Set `QODEX_CONFIG_HOME` for a portable or test-specific location. Use `--all` carefully because it removes cached model data.
 
 ## Backend Profiles
 
@@ -375,7 +414,7 @@ Qodex supports multiple OpenAI-compatible local backends. Select the backend dur
 backend = "llama.cpp"
 ```
 
-Qodex installs llama.cpp to `~/.config/qodex/bin/` and starts the server on port `8080` by default. Models are stored in `~/.config/qodex/models/`.
+Qodex installs llama.cpp and stores managed models below the platform user data directory. On Unix this is normally under `~/.config/qodex`; on Windows it is under the native application-data directory. Use `qodex serve status` to inspect the resolved install root.
 
 The managed llama.cpp release is pinned for reproducible setup. Set `QODEX_LLAMA_CPP_VERSION` to override it, and optionally set `QODEX_LLAMA_CPP_SHA256` to verify the downloaded archive before extraction.
 
@@ -533,3 +572,230 @@ With the default `llama.cpp` setup, prompts, code, and tool results stay on your
 If you configure a remote OpenAI-compatible endpoint, your data may leave your machine.
 
 See [Security Model](security-model.md) for the detailed tool and approval boundaries.
+
+## Operating Qodex Safely
+
+Qodex classifies tools by effect. Read operations normally run automatically; write, shell, and network operations are controlled by policy; destructive operations remain denied by policy. Network classification includes package installation, remote Git operations, HTTP commands, and MCP tools.
+
+When an approval appears in the TUI:
+
+- Press `y` or `1` to approve once.
+- Press `2` to approve the tool for the current session.
+- Press `3` to always approve that tool for the current session.
+- Press `n` to deny.
+- Press `Esc` to cancel the current interaction.
+
+Approval panels show risk, affected files, command or tool arguments, compact diffs, and timeout status. Decisions are written to the session audit stream. Review the working directory, paths, redirects, network destination, and credentials involved before approving a command.
+
+Use `--yes` only for a fully trusted, bounded task:
+
+```sh
+qodex --yes run "Run the focused tests and fix the failures"
+```
+
+`--yes` does not override deny rules for destructive tools or MCP permissions. Keep `network = "ask"` when package managers, remote Git, or external MCP servers are involved.
+
+## A Reliable Development Workflow
+
+For a change with moderate risk, use this sequence:
+
+1. Run `qodex doctor` and inspect `git status`.
+2. Ask Qodex to read repository instructions and explain the relevant code.
+3. Ask for a short plan and affected-file list.
+4. Create a Git snapshot before a risky refactor.
+5. Approve writes one diff at a time.
+6. Run focused tests and formatting before the full suite.
+7. Review `git diff`, `git status`, and the test output.
+8. Stage only intended paths and create a detailed commit.
+
+Useful prompts:
+
+```text
+Review my uncommitted changes for correctness, regressions, and missing tests. Do not edit files.
+```
+
+```text
+Create a snapshot, implement the smallest fix, run focused tests, and show me the final diff before committing.
+```
+
+```text
+Commit only the files changed for this task with a detailed conventional commit message.
+```
+
+The TUI `/commit` and `/undo` commands use the same approved Git workflow. `/undo` should be preferred over manually rewriting history when a change needs to be reversed.
+
+## MCP Operations
+
+Qodex supports MCP servers over stdio and Streamable HTTP. Configured tools are namespaced as `mcp_<server>_<tool>` and pass through normal network approval and audit handling.
+
+Inspect and diagnose servers before using them:
+
+```sh
+qodex mcp list
+qodex mcp doctor
+qodex mcp doctor <name>
+```
+
+Diagnostics check command or endpoint availability, environment-backed authentication, MCP initialization and `ping`, tool discovery, protocol version, server identity, and capabilities.
+
+Example stdio configuration:
+
+```toml
+[mcp.servers.files]
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/project"]
+enabled = true
+trust = "ask"
+
+[mcp.servers.files.auth]
+type = "bearer"
+token_env = "FILES_TOKEN"
+pass_env = "MCP_ACCESS_TOKEN"
+```
+
+Example Streamable HTTP configuration:
+
+```toml
+[mcp.servers.github]
+transport = "streamable-http"
+url = "https://mcp.example.com/mcp"
+enabled = true
+trust = "ask"
+
+[mcp.servers.github.auth]
+type = "oauth"
+token_env = "GITHUB_MCP_TOKEN"
+
+[mcp.servers.github.permissions]
+search_code = "allow"
+create_issue = "ask"
+delete_repository = "deny"
+```
+
+Supported authentication types are `none`, `bearer`, `api_key`, and `oauth`. Tokens are read from environment variables and are never stored in TOML or diagnostic output. Qodex does not perform browser login or dynamic OAuth client registration; obtain the token through the provider's normal flow first:
+
+```sh
+export GITHUB_MCP_TOKEN='...'
+qodex mcp doctor github
+```
+
+For PowerShell:
+
+```powershell
+$env:GITHUB_MCP_TOKEN = "..."
+qodex mcp doctor github
+```
+
+`trust` accepts `ask`, `trusted`, or `blocked`. Per-tool permissions accept `allow`, `ask`, or `deny`; deny remains effective even with `--yes`. Read [MCP Integration](mcp.md) for transport and server lifecycle details.
+
+## Context, Planning, and Tool Calls
+
+The agent tracks the current task, inspected files, active skill, actions taken, step count, and context usage. `agent.max_steps` limits the loop. Context compaction begins near 70% of `runtime.context_tokens` and retains the system prompt plus recent messages.
+
+In the TUI, use:
+
+```text
+/plan
+/compact
+```
+
+The default `agent.tool_calls = "prompt"` mode asks the model to emit validated inline JSON and preserves streaming. Native mode sends OpenAI `tools` schemas and consumes structured `tool_calls`:
+
+```toml
+[agent]
+tool_calls = "native"
+```
+
+Native calls can be more reliable with models trained for function calling, but backend support varies and streaming is disabled. Return to `prompt` when the endpoint does not return structured tool calls.
+
+## Cross-Platform Operation
+
+Native Windows executes shell commands through `cmd.exe /C`, so Bash syntax such as `$(...)`, `[[ ... ]]`, and Bash-only utility flags is not portable. Use Windows-native commands or run Qodex inside WSL2 for Bash-oriented projects and managed local backends.
+
+Do not hardcode `~/.config/qodex` in scripts. Qodex uses `$XDG_CONFIG_HOME/qodex` or `~/.config/qodex` on Unix and `%APPDATA%\\qodex` on Windows. Set `QODEX_CONFIG_HOME` when a portable or test-specific location is needed. Tools that are inherently Unix-specific report an actionable unsupported-platform error.
+
+Archive extraction validates paths. Symlink behavior and Unix permission bits differ on Windows, so do not assume executable-bit or symlink preservation across platforms.
+
+## LSP Tools
+
+LSP tools communicate over stdio JSON-RPC and are read-only:
+
+| Language | Server | Installation example |
+|---|---|---|
+| Go | `gopls` | `go install golang.org/x/tools/gopls@latest` |
+| Python | `pyright-langserver` | `pip install pyright` |
+| JavaScript/TypeScript | `typescript-language-server` | `npm install -g typescript-language-server typescript` |
+| Rust | `rust-analyzer` | `rustup component add rust-analyzer` |
+
+If a server is missing, Qodex reports the executable it tried and provides an installation hint. LSP results are most useful when run from the repository containing the relevant module or workspace metadata.
+
+## Troubleshooting Playbook
+
+### Model connectivity
+
+```sh
+qodex doctor
+qodex status
+qodex config get model.base_url
+curl http://127.0.0.1:8080/v1/models
+```
+
+Confirm the backend is listening on the configured port, the URL includes `/v1`, and the endpoint returns a model. For an external backend, Qodex does not install or stop the server.
+
+### Weak responses or malformed tool calls
+
+Use a larger coding model, lower `runtime.temperature`, reduce task scope, or switch between `prompt` and `native` tool calling. Ask for one action at a time when debugging model behavior. A larger context cannot compensate for an undersized or poorly instruction-tuned model.
+
+### MCP failure
+
+Run `qodex mcp doctor <name>`. Check that the command is on `PATH`, the URL is reachable, `token_env` is set in the same environment that launches Qodex, and the server supports initialization, `ping`, and `tools/list`. For HTTP servers, verify token expiry, auth type, and any required custom header.
+
+### TUI rendering
+
+Use a modern Unicode and true-color terminal, resize the terminal, and retry with `qodex run` to separate terminal problems from model or configuration problems. Windows Terminal is recommended on Windows.
+
+### Configuration errors
+
+```sh
+qodex config list
+```
+
+Check TOML syntax, spelling, enum values, absolute HTTP(S) URLs, positive context and step values, and MCP server names. Unknown keys are rejected intentionally.
+
+### Debug logs
+
+```sh
+qodex --debug /tmp/qodex.log doctor
+qodex --debug /tmp/qodex.log run "reproduce the issue"
+```
+
+On Windows, use a writable path such as `$env:TEMP\\qodex.log`. Logs can contain paths, tool metadata, and model errors; redact private information before sharing them.
+
+## Privacy and Data Handling
+
+With a local endpoint, prompts, source code, model responses, and tool results remain on the machine, subject to commands and network tools you approve. If `model.base_url` points to another host, content sent to that endpoint may leave the machine.
+
+Session databases, exports, debug logs, MCP tokens, and model caches can contain sensitive information. Protect them and remove credentials from logs before filing an issue. For the complete threat model, see the [Security Model](security-model.md).
+
+## Quick Reference
+
+```sh
+qodex version
+qodex doctor
+qodex init
+qodex config list
+qodex skills list
+qodex chat
+qodex run "Inspect the repository and explain the test workflow"
+qodex review
+qodex up
+qodex status
+qodex down
+qodex sessions list
+qodex sessions resume <id>
+qodex sessions export <id>
+qodex mcp list
+qodex mcp doctor
+qodex reset
+```

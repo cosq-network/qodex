@@ -4,6 +4,18 @@ Qodex is a local-first coding agent CLI written in Go. It uses a terminal UI wit
 
 The intended runtime is `llama.cpp`, and Qodex manages backend installation and catalog GGUF model downloads during `qodex setup` on Linux and macOS. vLLM and SGLang use Hugging Face model IDs and resolve model storage through their own runtimes. On Windows, WSL2 is the recommended path for managed local backends; native Windows can still target a manually managed OpenAI-compatible endpoint. Backend capability detection is performed at startup to enable streaming when supported.
 
+## Start Here
+
+For installation, first-run setup, model backends, configuration, approvals, TUI workflows, MCP, sessions, Git operations, troubleshooting, and cross-platform usage, read the [Qodex User Guide](docs/user-guide.md). The shortest first run is:
+
+```sh
+qodex setup
+qodex doctor
+qodex chat
+```
+
+Use `qodex run "..."` for one-shot tasks and `qodex review` to inspect uncommitted changes. The user guide is the authoritative reference for day-to-day operation; this README provides the project overview and compact reference.
+
 ## Current Status
 
 The repository includes a fully featured coding agent with:
@@ -69,7 +81,7 @@ Global flags (available on every command):
 | `status` | Compact backend status (running state, PID, port, model) |
 | `models list` | List known models and downloaded status |
 | `models download NAME` | Download a GGUF model into the platform user data directory (resumes partial files and validates the GGUF header) |
-| `reset` | Remove Qodex state, config, and cached data (`--force` skips confirmation, `--all` also removes `~/.config/qodex`) |
+| `reset` | Remove Qodex state, config, and cached data (`--force` skips confirmation, `--all` also removes the platform user directory) |
 | `version` | Print version, commit, and build date |
 | `completion SHELL` | Generate shell completion scripts (`bash`, `zsh`, `fish`, `powershell`) |
 
@@ -77,7 +89,7 @@ Global flags (available on every command):
 
 Configuration is TOML, discovered in this order (later wins):
 
-1. `~/.config/qodex/config.toml` — user config
+1. Platform user config directory (`$XDG_CONFIG_HOME/qodex` or `~/.config/qodex` on Unix; `%APPDATA%\\qodex` on Windows) — user config
 2. `<project>/.qodex/config.toml` — project config
 3. An explicit `--config PATH` — loads only that file
 
@@ -210,7 +222,7 @@ If a server is not installed, the tool returns installation instructions.
 
 ## Documentation
 
-- [User Guide](docs/user-guide.md)
+- [Qodex User Guide](docs/user-guide.md) — complete installation, configuration, workflow, safety, MCP, troubleshooting, and cross-platform reference
 - [Developer Guide](docs/developer-guide.md)
 - [Tool Calling And Skills](docs/tool-calling-and-skills.md)
 - [MCP Integration](docs/mcp.md)
