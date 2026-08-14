@@ -347,6 +347,65 @@ func TestContextCompactedEvent(t *testing.T) {
 	}
 }
 
+func TestCommandPaletteShowsDescriptions(t *testing.T) {
+	model := New(agent.New(agent.Options{}))
+	model.paletteOpen = true
+	view := model.View()
+	if !strings.Contains(view, "Command palette") || !strings.Contains(view, "Show active model and backend") {
+		t.Fatalf("expected command palette descriptions: %q", view)
+	}
+}
+
+func TestFuzzyPaletteFiltering(t *testing.T) {
+	model := New(agent.New(agent.Options{}))
+	model.paletteQuery = "mbe"
+	commands := model.filteredPalette()
+	if len(commands) != 1 || commands[0].name != "/model" {
+		t.Fatalf("unexpected fuzzy matches: %+v", commands)
+	}
+}
+
+func TestTranscriptSearchAndJump(t *testing.T) {
+	model := New(agent.New(agent.Options{}))
+	model.history = append(model.history, "You:", "inspect README", "Tool completed: read_file README.md", "Error: failed")
+	model.input.SetValue("README")
+	model.searchActive = true
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	if len(model.searchMatches) != 2 || model.selectedHistory != model.searchMatches[0] {
+		t.Fatalf("unexpected search state: matches=%v selected=%d", model.searchMatches, model.selectedHistory)
+	}
+	if got := model.jumpToCategory("error"); !strings.Contains(got, "Jumped") {
+		t.Fatalf("expected category jump, got %q", got)
+	}
+}
+
+func TestApprovalOptionsAndCountdownState(t *testing.T) {
+	model := New(agent.New(agent.Options{}))
+	decision := make(chan agent.ApprovalDecision, 1)
+	updated, _ := model.Update(approvalPrompt{
+		req:      agent.ApprovalRequest{Tool: "write_file", Kind: "write", Summary: "write_file README.md", Diff: "--- a/README.md\n+++ b/README.md"},
+		decision: decision,
+	})
+	model = updated.(Model)
+	if !strings.Contains(model.View(), "always") || !strings.Contains(model.View(), "Risk:") {
+		t.Fatalf("expected rich approval state: %q", model.View())
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	model = updated.(Model)
+	if model.pending != nil {
+		t.Fatal("expected approval to clear")
+	}
+	select {
+	case got := <-decision:
+		if got != agent.ApprovalSession {
+			t.Fatalf("decision = %v, want session", got)
+		}
+	default:
+		t.Fatal("expected approval decision")
+	}
+}
+
 func TestTUIApproverTimeoutWhenNoReader(t *testing.T) {
 	orig := approvalTimeout
 	approvalTimeout = 10 * time.Millisecond

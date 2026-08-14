@@ -23,6 +23,17 @@ type PlanState struct {
 	ActionsTaken   []string
 }
 
+type Progress struct {
+	CurrentTask    string
+	FilesInspected []string
+	ActionsTaken   []string
+	ActiveSkills   []string
+	CurrentStep    int
+	MaxSteps       int
+	ContextTokens  int
+	ContextLimit   int
+}
+
 type Options struct {
 	Config          config.Config
 	Client          *model.Client
@@ -52,6 +63,7 @@ type Agent struct {
 	streamCallback  func(string)
 	streaming       bool
 	planState       PlanState
+	currentStep     int
 	allowedTools    []string
 	selectedSkills  []skills.Skill
 	instructions    []skills.Instruction
@@ -61,6 +73,7 @@ type Agent struct {
 }
 
 type ApprovalRequest struct {
+	Tool    string
 	Kind    string
 	Summary string
 	Diff    string
@@ -68,6 +81,19 @@ type ApprovalRequest struct {
 
 type Approver interface {
 	Approve(ApprovalRequest) bool
+}
+
+type ApprovalDecision int
+
+const (
+	ApprovalDeny ApprovalDecision = iota
+	ApprovalOnce
+	ApprovalSession
+	ApprovalAlways
+)
+
+type AdvancedApprover interface {
+	ApproveWithOptions(ApprovalRequest) ApprovalDecision
 }
 
 type ApproverFunc func(ApprovalRequest) bool
@@ -122,6 +148,36 @@ func (a *Agent) ProjectRoot() string {
 
 func (a *Agent) Config() config.Config {
 	return a.cfg
+}
+
+func (a *Agent) SessionID() int64 { return a.sessionID }
+
+func (a *Agent) ExportSession(ctx context.Context) (store.ExportData, error) {
+	if a.store == nil || a.sessionID == 0 {
+		return store.ExportData{}, fmt.Errorf("no active session to export")
+	}
+	return a.store.ExportSession(ctx, a.sessionID)
+}
+
+func (a *Agent) Progress() Progress {
+	active := make([]string, 0, len(a.selectedSkills))
+	for _, skill := range a.selectedSkills {
+		active = append(active, skill.Name)
+	}
+	tokens := 0
+	for _, msg := range a.messages {
+		tokens += a.estimateTokens(msg)
+	}
+	return Progress{
+		CurrentTask:    a.planState.CurrentTask,
+		FilesInspected: append([]string(nil), a.planState.FilesInspected...),
+		ActionsTaken:   append([]string(nil), a.planState.ActionsTaken...),
+		ActiveSkills:   active,
+		CurrentStep:    a.currentStep,
+		MaxSteps:       a.maxSteps,
+		ContextTokens:  tokens,
+		ContextLimit:   a.cfg.Runtime.ContextTokens,
+	}
 }
 
 func (a *Agent) PlanSummary() string {
@@ -242,6 +298,8 @@ func (a *Agent) Run(ctx context.Context, prompt string) (result string, err erro
 	useNative := a.cfg.Agent.ToolCalls == "native"
 
 	for step := 0; step < a.maxSteps; step++ {
+		a.currentStep = step + 1
+		a.emit(Event{Type: "step_started", Summary: fmt.Sprintf("Agent step %d of %d", step+1, a.maxSteps)})
 		if useNative {
 			toolSchemas := a.tools.ToolSchemasFor(a.allowedTools)
 			res, err := a.chatWithTools(ctx, toolSchemas)
@@ -596,8 +654,16 @@ func (a *Agent) executeTool(ctx context.Context, call toolCall) (string, error) 
 			}
 		} else {
 			a.emit(Event{Type: "approval_requested", Tool: call.Name, Effect: effect, Summary: summary, Detail: diff})
-			userApproved := a.approver != nil && a.approver.Approve(ApprovalRequest{Kind: effect, Summary: summary, Diff: diff})
-			if !userApproved {
+			request := ApprovalRequest{Tool: call.Name, Kind: effect, Summary: summary, Diff: diff}
+			decision := ApprovalDeny
+			if advanced, ok := a.approver.(AdvancedApprover); ok {
+				decision = advanced.ApproveWithOptions(request)
+			} else if a.approver != nil {
+				if a.approver.Approve(request) {
+					decision = ApprovalOnce
+				}
+			}
+			if decision == ApprovalDeny {
 				a.emit(Event{Type: "approval_denied", Tool: call.Name, Effect: effect, Summary: summary})
 				if err := a.store.AddToolResult(ctx, callID, "", "approval denied"); err != nil {
 					a.logError("failed to persist tool result: %v", err)
@@ -607,7 +673,13 @@ func (a *Agent) executeTool(ctx context.Context, call toolCall) (string, error) 
 				}
 				return `{"ok":false,"summary":"approval denied"}`, nil
 			}
-			a.emit(Event{Type: "approval_approved", Tool: call.Name, Effect: effect, Summary: summary})
+			approvalType := "once"
+			if decision == ApprovalSession {
+				approvalType = "for session"
+			} else if decision == ApprovalAlways {
+				approvalType = "always for tool"
+			}
+			a.emit(Event{Type: "approval_approved", Tool: call.Name, Effect: effect, Summary: summary, Detail: approvalType})
 			if err := a.store.AddApproval(ctx, a.sessionID, callID, call.Name, effect, summary, true); err != nil {
 				a.logError("failed to persist approval: %v", err)
 			}
