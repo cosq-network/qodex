@@ -167,7 +167,7 @@ func mergeFile(cfg *Config, path string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var next fileConfig
 	if err := toml.NewDecoder(file).DisallowUnknownFields().Decode(&next); err != nil {

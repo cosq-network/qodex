@@ -47,7 +47,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Please report this at https://github.com/benoybose/qodex/issues")
 			if debugLog != nil {
 				ts := time.Now().UTC().Format(time.RFC3339)
-				fmt.Fprintf(debugLog, "%s PANIC %v\n", ts, r)
+				_, _ = fmt.Fprintf(debugLog, "%s PANIC %v\n", ts, r)
 			}
 			os.Exit(1)
 		}
@@ -77,7 +77,7 @@ No configuration found? Run 'qodex setup' for an interactive setup wizard.`,
 				}
 				debugLog = f
 				ts := time.Now().UTC().Format(time.RFC3339)
-				fmt.Fprintf(debugLog, "%s qodex version=%s commit=%s\n", ts, version, commit)
+				_, _ = fmt.Fprintf(debugLog, "%s qodex version=%s commit=%s\n", ts, version, commit)
 			}
 			return nil
 		},
@@ -629,7 +629,7 @@ func sessionsCmd(cfgPath *string, yes *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 			sessions, err := db.ListSessions(cmd.Context())
 			if err != nil {
 				return err
@@ -698,7 +698,7 @@ func sessionsCmd(cfgPath *string, yes *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 			data, err := db.ExportSession(cmd.Context(), id)
 			if err != nil {
 				return err
@@ -822,8 +822,8 @@ func buildRuntime(cfgPath string, yes bool, tuiMode bool, sessionID int64) (*run
 	if debugLog != nil {
 		client.SetDebugLog(func(format string, args ...interface{}) {
 			ts := time.Now().UTC().Format(time.RFC3339)
-			fmt.Fprintf(debugLog, "%s ", ts)
-			fmt.Fprintf(debugLog, format+"\n", args...)
+			_, _ = fmt.Fprintf(debugLog, "%s ", ts)
+			_, _ = fmt.Fprintf(debugLog, format+"\n", args...)
 		})
 	}
 	registry := tools.NewRegistry(cfg.ProjectRoot)

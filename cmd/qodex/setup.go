@@ -249,7 +249,9 @@ func readInput(reader *bufio.Reader, fallback string) string {
 
 func promptYesNo(reader *bufio.Reader, out io.Writer, prompt string, fallback bool) bool {
 	if out != nil {
-		fmt.Fprint(out, prompt)
+		if _, err := fmt.Fprint(out, prompt); err != nil {
+			return fallback
+		}
 	}
 	line, err := reader.ReadString('\n')
 	if err != nil {
@@ -263,32 +265,32 @@ func promptYesNo(reader *bufio.Reader, out io.Writer, prompt string, fallback bo
 }
 
 func printManualModelHelp(errOut io.Writer, modelName, modelsDir string) {
-	fmt.Fprintf(errOut, "Manual download required for %s\n", modelName)
-	fmt.Fprintf(errOut, "Place the model file in: %s\n", modelsDir)
-	fmt.Fprintf(errOut, "Or run: qodex models download %s\n", modelName)
-	fmt.Fprintf(errOut, "Find GGUF models at: https://huggingface.co/models?library=gguf\n")
+	_, _ = fmt.Fprintf(errOut, "Manual download required for %s\n", modelName)
+	_, _ = fmt.Fprintf(errOut, "Place the model file in: %s\n", modelsDir)
+	_, _ = fmt.Fprintf(errOut, "Or run: qodex models download %s\n", modelName)
+	_, _ = fmt.Fprintf(errOut, "Find GGUF models at: https://huggingface.co/models?library=gguf\n")
 }
 
 func maybeRedirectUnsupportedManagedBackend(reader *bufio.Reader, backend model.Backend, out io.Writer) model.Backend {
 	switch backend {
 	case model.BackendLlamaCpp:
 		if runtimepkg.GOOS == "windows" {
-			fmt.Fprintln(out, "\nNative Windows does not support automatic llama.cpp setup yet.")
-			fmt.Fprintln(out, "WSL2 is recommended for managed local backends.")
+			_, _ = fmt.Fprintln(out, "\nNative Windows does not support automatic llama.cpp setup yet.")
+			_, _ = fmt.Fprintln(out, "WSL2 is recommended for managed local backends.")
 			if promptYesNo(reader, out, "Configure an external endpoint instead? [Y/n]: ", true) {
 				return model.BackendExternal
 			}
 		}
 	case model.BackendVLLM:
 		if !hasPython() {
-			fmt.Fprintln(out, "\nvLLM requires Python and pip on this machine.")
+			_, _ = fmt.Fprintln(out, "\nvLLM requires Python and pip on this machine.")
 			if promptYesNo(reader, out, "Configure an external endpoint instead? [Y/n]: ", true) {
 				return model.BackendExternal
 			}
 		}
 	case model.BackendSGLang:
 		if !hasPython() {
-			fmt.Fprintln(out, "\nSGLang requires Python and pip on this machine.")
+			_, _ = fmt.Fprintln(out, "\nSGLang requires Python and pip on this machine.")
 			if promptYesNo(reader, out, "Configure an external endpoint instead? [Y/n]: ", true) {
 				return model.BackendExternal
 			}
@@ -366,17 +368,17 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	defer func() { _ = os.Remove(tmpName) }()
 	if err := tmp.Chmod(mode); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
@@ -402,18 +404,18 @@ func selectSetupModel(ctx context.Context, reader *bufio.Reader, registry setupM
 		return "", false, err
 	}
 
-	fmt.Fprintln(out, "Available models:")
+	_, _ = fmt.Fprintln(out, "Available models:")
 	for i, m := range models {
 		downloaded := ""
 		if m.Downloaded {
 			downloaded = " (downloaded)"
 		}
-		fmt.Fprintf(out, "  %d. %s %s%s\n", i+1, m.Name, m.Size, downloaded)
+		_, _ = fmt.Fprintf(out, "  %d. %s %s%s\n", i+1, m.Name, m.Size, downloaded)
 	}
-	fmt.Fprint(out, "\nSelect model [1]: ")
+	_, _ = fmt.Fprint(out, "\nSelect model [1]: ")
 	modelChoice := readInput(reader, "1")
 	idx := 0
-	fmt.Sscanf(modelChoice, "%d", &idx)
+	_, _ = fmt.Sscanf(modelChoice, "%d", &idx)
 	if idx <= 0 || idx > len(models) {
 		idx = 1
 	}
@@ -423,7 +425,7 @@ func selectSetupModel(ctx context.Context, reader *bufio.Reader, registry setupM
 		return modelName, true, nil
 	}
 
-	fmt.Fprintf(out, "Model %s is not downloaded.\n", modelName)
+	_, _ = fmt.Fprintf(out, "Model %s is not downloaded.\n", modelName)
 	if !promptYesNo(reader, out, "Download now? [Y/n]: ", true) {
 		printManualModelHelp(errOut, modelName, registry.ModelsDir())
 		return modelName, false, nil
@@ -474,10 +476,10 @@ func wrapModelError(err error) error {
 		strings.Contains(errStr, "no such host") ||
 		strings.Contains(errStr, "i/o timeout") ||
 		strings.Contains(errStr, "dial tcp") {
-		return fmt.Errorf("%w\n\nMake sure your model server is running.\nRun 'qodex doctor' to check connectivity or 'qodex setup' to reconfigure.", err)
+		return fmt.Errorf("%w; make sure your model server is running; run 'qodex doctor' to check connectivity or 'qodex setup' to reconfigure", err)
 	}
 	if _, ok := err.(net.Error); ok {
-		return fmt.Errorf("%w\n\nNetwork error — check your model endpoint.\nRun 'qodex doctor' for diagnostics.", err)
+		return fmt.Errorf("%w; network error — check your model endpoint; run 'qodex doctor' for diagnostics", err)
 	}
 	return err
 }

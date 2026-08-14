@@ -17,7 +17,7 @@ func TestCheckSuccess(t *testing.T) {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{"data": []string{}})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": []string{}})
 	}))
 	defer srv.Close()
 
@@ -33,7 +33,7 @@ func TestCheckSuccess(t *testing.T) {
 func TestCheckFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal error"))
+		_, _ = w.Write([]byte("internal error"))
 	}))
 	defer srv.Close()
 
@@ -77,7 +77,7 @@ func TestChatSuccess(t *testing.T) {
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
 
@@ -95,7 +95,7 @@ func TestChatSuccess(t *testing.T) {
 func TestChatErrorStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte("rate limited"))
+		_, _ = w.Write([]byte("rate limited"))
 	}))
 	defer srv.Close()
 
@@ -114,7 +114,7 @@ func TestChatNoChoices(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := chatResponse{Choices: []chatResponseChoice{}}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
 
@@ -156,10 +156,10 @@ func TestChatStreamSuccess(t *testing.T) {
 					}{Content: chunk}},
 				},
 			})
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
-		fmt.Fprintf(w, "data: [DONE]\n\n")
+		_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")
 		flusher.Flush()
 	}))
 	defer srv.Close()
@@ -186,7 +186,7 @@ func TestChatStreamSuccess(t *testing.T) {
 func TestChatStreamHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("bad request"))
+		_, _ = w.Write([]byte("bad request"))
 	}))
 	defer srv.Close()
 
@@ -216,7 +216,7 @@ func TestDetectCapabilitiesStreaming(t *testing.T) {
 				}{Content: "hello"}},
 			},
 		})
-		fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", data)
+		_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", data)
 	}))
 	defer srv.Close()
 
@@ -232,7 +232,7 @@ func TestDetectCapabilitiesNoStreaming(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(chatResponse{Choices: []chatResponseChoice{}})
+		_ = json.NewEncoder(w).Encode(chatResponse{Choices: []chatResponseChoice{}})
 	}))
 	defer srv.Close()
 
@@ -259,7 +259,7 @@ func TestDetectCapabilitiesNonStreamingResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
 	}))
 	defer srv.Close()
 
@@ -319,7 +319,7 @@ func TestChatStreamCancelledContext(t *testing.T) {
 				}{Content: "partial "}},
 			},
 		})
-		fmt.Fprintf(w, "data: %s\n\n", data)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 		// Hold the connection open
 		<-r.Context().Done()
@@ -374,7 +374,7 @@ func TestChatWithToolsContentOnly(t *testing.T) {
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
 
@@ -419,7 +419,7 @@ func TestChatWithToolsToolCall(t *testing.T) {
 			}},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
 
@@ -452,7 +452,7 @@ func TestChatWithToolsToolCall(t *testing.T) {
 func TestChatWithToolsHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
-		w.Write([]byte("upstream error"))
+		_, _ = w.Write([]byte("upstream error"))
 	}))
 	defer srv.Close()
 
@@ -481,10 +481,10 @@ func TestChatStreamSSEParseError(t *testing.T) {
 				}{Content: "Hello"}},
 			},
 		})
-		fmt.Fprintf(w, "data: %s\n\n", data)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 
-		fmt.Fprintf(w, "data: {invalid json}\n\n")
+		_, _ = fmt.Fprintf(w, "data: {invalid json}\n\n")
 		flusher.Flush()
 
 		data, _ = json.Marshal(streamChunk{
@@ -498,10 +498,10 @@ func TestChatStreamSSEParseError(t *testing.T) {
 				}{Content: " World"}},
 			},
 		})
-		fmt.Fprintf(w, "data: %s\n\n", data)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 
-		fmt.Fprintf(w, "data: [DONE]\n\n")
+		_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")
 		flusher.Flush()
 	}))
 	defer srv.Close()

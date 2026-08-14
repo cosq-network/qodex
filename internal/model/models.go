@@ -152,7 +152,7 @@ func (r *ModelRegistry) Download(ctx context.Context, modelName string) error {
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	switch resp.StatusCode {
 	case http.StatusOK:
@@ -221,7 +221,7 @@ func VerifyGGUF(path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var magic [4]byte
 	if _, err := io.ReadFull(f, magic[:]); err != nil {
 		return fmt.Errorf("unable to read header: %w", err)
@@ -244,7 +244,7 @@ func (r *ModelRegistry) remoteSize(ctx context.Context, modelURL string) (int64,
 	if err != nil {
 		return -1, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return -1, nil
 	}

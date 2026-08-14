@@ -11,9 +11,15 @@ import (
 
 func TestProjectIndexQueryFiles(t *testing.T) {
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644)
-	os.WriteFile(filepath.Join(root, "util.py"), []byte("def foo():\n    pass\n"), 0o644)
-	os.WriteFile(filepath.Join(root, "README.md"), []byte("# Project\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "util.py"), []byte("def foo():\n    pass\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# Project\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	idx := NewProjectIndex(root)
 	files := idx.QueryFiles("go", "", 100)
@@ -24,7 +30,9 @@ func TestProjectIndexQueryFiles(t *testing.T) {
 
 func TestProjectIndexQuerySymbols(t *testing.T) {
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "example.go"), []byte("package main\nfunc Hello() {}\ntype User struct{}\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(root, "example.go"), []byte("package main\nfunc Hello() {}\ntype User struct{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	idx := NewProjectIndex(root)
 	syms := idx.QuerySymbols("Hello", "", "", 10)
@@ -39,8 +47,12 @@ func TestProjectIndexQuerySymbols(t *testing.T) {
 
 func TestProjectIndexSummary(t *testing.T) {
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\n"), 0o644)
-	os.WriteFile(filepath.Join(root, "b.py"), []byte("# b\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "b.py"), []byte("# b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	idx := NewProjectIndex(root)
 	summary := idx.Summary()
@@ -51,7 +63,9 @@ func TestProjectIndexSummary(t *testing.T) {
 
 func TestRebuildIfStaleNotStale(t *testing.T) {
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	idx := NewProjectIndex(root)
 
 	// Should have 1 file initially
@@ -60,7 +74,9 @@ func TestRebuildIfStaleNotStale(t *testing.T) {
 	}
 
 	// Add a new file but don't rebuild
-	os.WriteFile(filepath.Join(root, "b.go"), []byte("package b\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(root, "b.go"), []byte("package b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// RebuildIfStale with a generous maxAge — should not rebuild
 	idx.RebuildIfStale(root, time.Hour)
@@ -71,11 +87,15 @@ func TestRebuildIfStaleNotStale(t *testing.T) {
 
 func TestRebuildIfStaleForceRebuild(t *testing.T) {
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	idx := NewProjectIndex(root)
 
 	// Add a new file
-	os.WriteFile(filepath.Join(root, "b.go"), []byte("package b\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(root, "b.go"), []byte("package b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// RebuildIfStale with 0 maxAge — forces rebuild
 	idx.RebuildIfStale(root, 0)
@@ -86,8 +106,12 @@ func TestRebuildIfStaleForceRebuild(t *testing.T) {
 
 func TestProjectIndexConcurrentAccess(t *testing.T) {
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\n"), 0o644)
-	os.WriteFile(filepath.Join(root, "b.go"), []byte("package b\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "b.go"), []byte("package b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	r := NewRegistry(root)
 	// Initialize the index
@@ -110,7 +134,9 @@ func TestProjectIndexConcurrentAccess(t *testing.T) {
 
 func TestProjectIndexJavaSymbols(t *testing.T) {
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "Example.java"), []byte("public class Example {}\nclass Internal {}\nprivate record Data(int x) {}\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(root, "Example.java"), []byte("public class Example {}\nclass Internal {}\nprivate record Data(int x) {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	idx := NewProjectIndex(root)
 

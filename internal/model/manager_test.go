@@ -68,7 +68,7 @@ func TestEnsureUsablePortChoosesFreePortWhenOccupied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen failed: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	port := ln.Addr().(*net.TCPAddr).Port
 	mgr := NewManager(BackendLlamaCpp, t.TempDir(), "demo.gguf", port)
@@ -101,8 +101,8 @@ func TestStatusUsesSavedStatePort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	updated := string(data)
-	updated = fmt.Sprintf(`{"backend":"llama.cpp","model":"demo.gguf","port":%d,"pid":1234,"endpoint":"http://127.0.0.1:%d/v1","updated_at":"now"}`, port, port)
+	_ = string(data)
+	updated := fmt.Sprintf(`{"backend":"llama.cpp","model":"demo.gguf","port":%d,"pid":1234,"endpoint":"http://127.0.0.1:%d/v1","updated_at":"now"}`, port, port)
 	if err := os.WriteFile(statePath, []byte(updated), 0o644); err != nil {
 		t.Fatal(err)
 	}

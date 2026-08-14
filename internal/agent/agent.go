@@ -278,10 +278,10 @@ func (a *Agent) Run(ctx context.Context, prompt string) (result string, err erro
 				var summary strings.Builder
 				summary.WriteString("Tool call state from prior session:\n")
 				for _, tc := range toolCalls {
-					summary.WriteString(fmt.Sprintf("- %s: %s [%s]", tc.Name, tc.Arguments, tc.Status))
+					_, _ = fmt.Fprintf(&summary, "- %s: %s [%s]", tc.Name, tc.Arguments, tc.Status)
 					if tc.Result != nil {
 						if tc.Result.Error != "" {
-							summary.WriteString(fmt.Sprintf(" error=%s", tc.Result.Error))
+							_, _ = fmt.Fprintf(&summary, " error=%s", tc.Result.Error)
 						}
 					}
 					summary.WriteString("\n")
@@ -516,29 +516,6 @@ func (a *Agent) systemPrompt(userPrompt string) string {
 	return b.String()
 }
 
-func filterToolPrompt(prompt string, allowed []string) string {
-	allowedSet := make(map[string]bool, len(allowed))
-	for _, name := range allowed {
-		allowedSet[name] = true
-	}
-	var out strings.Builder
-	lines := strings.Split(prompt, "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "- ") {
-			fields := strings.Fields(line[2:])
-			if len(fields) > 0 {
-				toolName := strings.TrimSuffix(fields[0], ":")
-				if !allowedSet[toolName] {
-					continue
-				}
-			}
-		}
-		out.WriteString(line)
-		out.WriteString("\n")
-	}
-	return strings.TrimRight(out.String(), "\n")
-}
-
 type toolCallEnvelope struct {
 	ToolCall toolCall `json:"tool_call"`
 }
@@ -674,9 +651,10 @@ func (a *Agent) executeTool(ctx context.Context, call toolCall) (string, error) 
 				return `{"ok":false,"summary":"approval denied"}`, nil
 			}
 			approvalType := "once"
-			if decision == ApprovalSession {
+			switch decision {
+			case ApprovalSession:
 				approvalType = "for session"
-			} else if decision == ApprovalAlways {
+			case ApprovalAlways:
 				approvalType = "always for tool"
 			}
 			a.emit(Event{Type: "approval_approved", Tool: call.Name, Effect: effect, Summary: summary, Detail: approvalType})
@@ -803,7 +781,7 @@ func (a *Agent) logError(format string, args ...interface{}) {
 	fmt.Fprintln(os.Stderr, msg)
 	if a.debugWriter != nil {
 		ts := time.Now().UTC().Format(time.RFC3339)
-		fmt.Fprintf(a.debugWriter, "%s ERROR %s\n", ts, msg)
+		_, _ = fmt.Fprintf(a.debugWriter, "%s ERROR %s\n", ts, msg)
 	}
 }
 
@@ -813,7 +791,7 @@ func (a *Agent) logDebug(format string, args ...interface{}) {
 	}
 	msg := fmt.Sprintf(format, args...)
 	ts := time.Now().UTC().Format(time.RFC3339)
-	fmt.Fprintf(a.debugWriter, "%s DEBUG %s\n", ts, msg)
+	_, _ = fmt.Fprintf(a.debugWriter, "%s DEBUG %s\n", ts, msg)
 }
 
 func (a *Agent) emit(event Event) {

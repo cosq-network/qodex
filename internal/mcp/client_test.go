@@ -16,7 +16,7 @@ func TestStdioClientDiscoversAndCallsTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	tools, err := client.ListTools(context.Background())
 	if err != nil {
@@ -43,7 +43,7 @@ func TestStartPassesConfiguredAuthWithoutLoggingSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 }
 
 func TestStartRejectsMissingConfiguredAuth(t *testing.T) {
@@ -83,7 +83,7 @@ func TestCallToolHonorsContextWhenServerDoesNotRespond(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	started := time.Now()

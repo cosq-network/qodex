@@ -35,11 +35,11 @@ type ProjectIndex struct {
 }
 
 var funcRe = map[string]*regexp.Regexp{
-	"go":  regexp.MustCompile(`^(func|type|struct|interface)\s+(\w+)`),
-	"py":  regexp.MustCompile(`^(def|class)\s+(\w+)`),
-	"js":  regexp.MustCompile(`^(function|class|const|let|var)\s+(\w+)`),
-	"ts":  regexp.MustCompile(`^(function|class|const|let|var|interface|type|enum)\s+(\w+)`),
-	"rs":  regexp.MustCompile(`^(fn|struct|enum|trait|impl|type|const)\s+(\w+)`),
+	"go":   regexp.MustCompile(`^(func|type|struct|interface)\s+(\w+)`),
+	"py":   regexp.MustCompile(`^(def|class)\s+(\w+)`),
+	"js":   regexp.MustCompile(`^(function|class|const|let|var)\s+(\w+)`),
+	"ts":   regexp.MustCompile(`^(function|class|const|let|var|interface|type|enum)\s+(\w+)`),
+	"rs":   regexp.MustCompile(`^(fn|struct|enum|trait|impl|type|const)\s+(\w+)`),
 	"java": regexp.MustCompile(`^\s*(?:public|private|protected)?\s*(class|interface|enum|record)\s+(\w+)`),
 }
 
@@ -103,7 +103,7 @@ func NewProjectIndex(root string) *ProjectIndex {
 		if err != nil {
 			return nil
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		scanner := bufio.NewScanner(f)
 		lineNum := 0
 		for scanner.Scan() {
@@ -204,9 +204,9 @@ func (idx *ProjectIndex) Summary() string {
 	}
 	sort.Strings(keys)
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Project index: %d files, %d symbols, %.1f KB total\n", len(idx.files), len(idx.symbols), float64(totalSize)/1024))
+	_, _ = fmt.Fprintf(&b, "Project index: %d files, %d symbols, %.1f KB total\n", len(idx.files), len(idx.symbols), float64(totalSize)/1024)
 	for _, k := range keys {
-		b.WriteString(fmt.Sprintf("- %s: %d files\n", k, langs[k]))
+		_, _ = fmt.Fprintf(&b, "- %s: %d files\n", k, langs[k])
 	}
 	return b.String()
 }
@@ -227,12 +227,12 @@ func (r *Registry) projectIndex(ctx context.Context, raw json.RawMessage) (Resul
 	}
 	r.mu.Unlock()
 	var args struct {
-		Query       string `json:"query"`
-		Symbol      string `json:"symbol"`
-		Kind        string `json:"kind"`
-		Lang        string `json:"lang"`
-		MaxResults  int    `json:"max_results"`
-		Summary bool `json:"summary"`
+		Query      string `json:"query"`
+		Symbol     string `json:"symbol"`
+		Kind       string `json:"kind"`
+		Lang       string `json:"lang"`
+		MaxResults int    `json:"max_results"`
+		Summary    bool   `json:"summary"`
 	}
 	_ = json.Unmarshal(raw, &args)
 
@@ -247,7 +247,7 @@ func (r *Registry) projectIndex(ctx context.Context, raw json.RawMessage) (Resul
 		}
 		var b strings.Builder
 		for _, s := range symbols {
-			b.WriteString(fmt.Sprintf("%s:%d:%s (%s) [%s]\n", s.File, s.Line, s.Name, s.Kind, s.Language))
+			_, _ = fmt.Fprintf(&b, "%s:%d:%s (%s) [%s]\n", s.File, s.Line, s.Name, s.Kind, s.Language)
 		}
 		return Result{
 			OK:      true,

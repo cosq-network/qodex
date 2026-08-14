@@ -163,7 +163,7 @@ func (p *Progress) View(barCells int) string {
 		b.WriteString("] ")
 		fmt.Fprintf(&b, "%6.1f%%", percent)
 	} else {
-		b.WriteString(fmt.Sprintf("Downloaded %s", humanBytes(p.lastBytes)))
+		_, _ = fmt.Fprintf(&b, "Downloaded %s", humanBytes(p.lastBytes))
 	}
 	speed := p.speed
 	var eta time.Duration
@@ -186,11 +186,11 @@ func (p *Progress) String() string {
 // WriteCLI redraws the progress bar in place on w using a carriage return and
 // line erase, so successive calls update a single terminal line.
 func (p *Progress) WriteCLI(w io.Writer, barCells int) {
-	fmt.Fprintf(w, "\r\033[K%s", p.View(barCells))
+	_, _ = fmt.Fprintf(w, "\r\033[K%s", p.View(barCells))
 }
 
 // WriteLine writes the progress bar as a plain single line (no carriage
 // return). Use this when the output is not a terminal.
 func (p *Progress) WriteLine(w io.Writer, barCells int) {
-	fmt.Fprintln(w, p.View(barCells))
+	_, _ = fmt.Fprintln(w, p.View(barCells))
 }

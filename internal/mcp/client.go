@@ -241,7 +241,7 @@ func Diagnose(ctx context.Context, cfg ServerConfig) Diagnostics {
 			diag.Hint = "Verify the endpoint, authentication metadata, and MCP server availability"
 			return diag
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 		health, err := client.Health(ctx)
 		diag.Protocol, diag.ServerInfo, diag.Capabilities, diag.ToolCount = health.Protocol, health.ServerInfo, health.Capabilities, health.ToolCount
 		if err != nil {
@@ -273,7 +273,7 @@ func Diagnose(ctx context.Context, cfg ServerConfig) Diagnostics {
 		diag.Hint = diag.InstallHint + "; check the command arguments and MCP server logs"
 		return diag
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	health, err := client.Health(ctx)
 	diag.Protocol = health.Protocol
 	diag.ServerInfo = health.ServerInfo
@@ -487,7 +487,7 @@ func (c *Client) httpRequestLocked(ctx context.Context, request rpcRequest) (jso
 	if err != nil {
 		return nil, nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
 	if err != nil {
 		return nil, resp.Header, err
@@ -567,7 +567,7 @@ func (c *Client) httpNotify(ctx context.Context, request rpcRequest) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		return fmt.Errorf("MCP HTTP notification status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))

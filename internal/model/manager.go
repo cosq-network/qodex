@@ -170,8 +170,8 @@ func (m *Manager) installLlamaCpp(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
 	}
-	defer os.Remove(tmpFile.Name())
-	defer tmpFile.Close()
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+	defer func() { _ = tmpFile.Close() }()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
@@ -182,7 +182,7 @@ func (m *Manager) installLlamaCpp(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("download failed: status %d", resp.StatusCode)
 	}
@@ -190,7 +190,9 @@ func (m *Manager) installLlamaCpp(ctx context.Context) error {
 	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
 		return fmt.Errorf("write download: %w", err)
 	}
-	tmpFile.Close()
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close download: %w", err)
+	}
 	if expected := strings.TrimSpace(os.Getenv("QODEX_LLAMA_CPP_SHA256")); expected != "" {
 		if err := verifySHA256(tmpFile.Name(), expected); err != nil {
 			return fmt.Errorf("llama.cpp archive verification failed: %w", err)
@@ -240,7 +242,7 @@ func verifySHA256(path, expected string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
 		return err
@@ -257,13 +259,13 @@ func (m *Manager) extractTar(tarPath, destDir string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		return err
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 
 	tr := tar.NewReader(gz)
 	for {
@@ -298,10 +300,10 @@ func (m *Manager) extractTar(tarPath, destDir string) error {
 				return err
 			}
 			if _, err := io.Copy(dst, tr); err != nil {
-				dst.Close()
+				_ = dst.Close()
 				return err
 			}
-			dst.Close()
+			_ = dst.Close()
 		case tar.TypeSymlink:
 			if runtime.GOOS == "windows" {
 				break
@@ -352,7 +354,7 @@ func pythonExecutable() (string, error) {
 			return path, nil
 		}
 	}
-	return "", fmt.Errorf("Python 3 with pip not found - install Python 3.8+ and activate a virtual environment first")
+	return "", fmt.Errorf("python 3 with pip not found - install Python 3.8+ and activate a virtual environment first")
 }
 
 func (m *Manager) binaryPath() string {
@@ -720,17 +722,17 @@ func writeAtomicFile(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	defer func() { _ = os.Remove(tmpName) }()
 	if err := tmp.Chmod(mode); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
@@ -784,7 +786,7 @@ func chooseFreePort() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	addr, ok := ln.Addr().(*net.TCPAddr)
 	if !ok {
 		return 0, fmt.Errorf("unexpected address type %T", ln.Addr())

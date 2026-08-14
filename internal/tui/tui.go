@@ -97,8 +97,6 @@ type approvalTickMsg time.Time
 
 type filesLoadedMsg []string
 
-type spinnerTickMsg spinner.TickMsg
-
 var (
 	headerStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
 	userStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
@@ -118,7 +116,7 @@ var (
 
 const composerPlaceholder = "Ask Qodex to inspect, explain, edit, or run tests...  (@ to reference files)"
 
-var ansiRegexp = regexp.MustCompile("\\x1b\\[[0-9;]*[A-Za-z]")
+var ansiRegexp = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
 type paletteCommand struct {
 	name        string
@@ -956,7 +954,7 @@ func (m Model) View() string {
 		var b strings.Builder
 		b.WriteString("\n")
 		for i, match := range m.matches {
-			line := "  " + match
+			var line string
 			if i == m.matchIdx {
 				line = autoSelStyle.Render("▸ " + match)
 			} else {
@@ -1029,7 +1027,7 @@ func (m Model) progressView() string {
 			parts = append(parts, "Compaction soon")
 		}
 	}
-	if m.startedAt.IsZero() == false {
+	if !m.startedAt.IsZero() {
 		parts = append(parts, "Elapsed: "+time.Since(m.startedAt).Round(time.Second).String())
 	}
 	if len(parts) == 0 {
@@ -1265,9 +1263,10 @@ func renderApprovalWithOptions(req agent.ApprovalRequest, expanded bool) string 
 	}
 	files := affectedFiles(req.Summary, req.Diff)
 	risk := "moderate"
-	if req.Kind == "destructive" {
+	switch req.Kind {
+	case "destructive":
 		risk = "critical"
-	} else if req.Kind == "network" || req.Kind == "shell" {
+	case "network", "shell":
 		risk = "high"
 	}
 	text := fmt.Sprintf("%s\nTool: %s\nRisk: %s", approvalStyle.Render("Approval required • "+req.Kind), tool, risk)

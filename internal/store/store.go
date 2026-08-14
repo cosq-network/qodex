@@ -37,11 +37,11 @@ type ToolCallRecord struct {
 }
 
 type ToolResultRecord struct {
-	ID        int64
+	ID         int64
 	ToolCallID int64
-	Output    string
-	Error     string
-	CreatedAt time.Time
+	Output     string
+	Error      string
+	CreatedAt  time.Time
 }
 
 type ExportData struct {
@@ -169,7 +169,7 @@ func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Session
 	for rows.Next() {
 		var id int64
@@ -211,7 +211,7 @@ func (s *Store) ListToolCalls(ctx context.Context, sessionID int64) ([]ToolCallR
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []ToolCallRecord
 	for rows.Next() {
 		var r ToolCallRecord
@@ -229,10 +229,10 @@ func (s *Store) ListToolCalls(ctx context.Context, sessionID int64) ([]ToolCallR
 		}
 		if resultID.Valid {
 			r.Result = &ToolResultRecord{
-				ID:        resultID.Int64,
+				ID:         resultID.Int64,
 				ToolCallID: resultToolCallID.Int64,
-				Output:    resultOutput.String,
-				Error:     resultError.String,
+				Output:     resultOutput.String,
+				Error:      resultError.String,
 			}
 			if t, parseErr := time.Parse(time.RFC3339, resultCreated.String); parseErr != nil {
 				fmt.Fprintf(os.Stderr, "[qodex] failed to parse tool result created_at: %v\n", parseErr)
@@ -266,7 +266,7 @@ func (s *Store) ListMessages(ctx context.Context, sessionID int64) ([]Message, e
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Message
 	for rows.Next() {
 		var role, content, created string

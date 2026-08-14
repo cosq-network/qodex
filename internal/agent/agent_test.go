@@ -64,7 +64,7 @@ func TestAgentLoopWithFakeModelServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := writeTestFile(filepath.Join(root, "README.md"), "Qodex test project\n"); err != nil {
 		t.Fatal(err)
@@ -126,7 +126,7 @@ func TestAgentLoopWithNativeToolCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := writeTestFile(filepath.Join(root, "README.md"), "Qodex test project\n"); err != nil {
 		t.Fatal(err)
@@ -199,7 +199,7 @@ func TestAgentClassifiesNetworkCommandForApproval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	var approvalKind string
 	agent := New(Options{
@@ -230,7 +230,7 @@ func TestAgentEmitsToolAndApprovalEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	var events []Event
 	agent := New(Options{
@@ -269,7 +269,7 @@ func TestExecuteScriptRunsPreApprovedScript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	agent := New(Options{
 		Config:    config.Defaults(root),
@@ -310,7 +310,7 @@ func TestExecuteScriptRejectsUnknownDescription(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	agent := New(Options{
 		Config:    config.Defaults(root),
@@ -338,7 +338,7 @@ func TestExecuteScriptRejectsNoDescription(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	agent := New(Options{
 		Config:    config.Defaults(root),

@@ -420,7 +420,7 @@ func generateDiff(filename, old, new string) string {
 			hunkNewLen = 1
 		}
 
-		b.WriteString(fmt.Sprintf("@@ -%d,%d +%d,%d @@\n", hunkOld, hunkOldLen, hunkNew, hunkNewLen))
+		_, _ = fmt.Fprintf(&b, "@@ -%d,%d +%d,%d @@\n", hunkOld, hunkOldLen, hunkNew, hunkNewLen)
 		for j := hunkStart; j < tempEnd; j++ {
 			b.WriteByte(edits[j].op)
 			b.WriteString(edits[j].line)
@@ -1032,7 +1032,7 @@ func runWithKill(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
 	case r := <-done:
 		return r.out, r.err
 	case <-ctx.Done():
-		cmd.Process.Kill()
+		_ = cmd.Process.Kill()
 		<-done
 		return nil, ctx.Err()
 	}
@@ -1052,7 +1052,7 @@ func runWithKillStdin(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
 	case r := <-done:
 		return r.out, r.err
 	case <-ctx.Done():
-		cmd.Process.Kill()
+		_ = cmd.Process.Kill()
 		<-done
 		return nil, ctx.Err()
 	}
@@ -1323,15 +1323,13 @@ func (r *Registry) reviewChanges(ctx context.Context, raw json.RawMessage) (Resu
 	var b strings.Builder
 	b.WriteString("# Review of Uncommitted Changes\n\n")
 
-	// Get git diff
-	diffArgs := []string{"diff"}
-	if args.Scope == "staged" {
+	// Get git diff.
+	diffArgs := []string{"diff", "HEAD"} // all: staged + working
+	switch args.Scope {
+	case "staged":
 		diffArgs = []string{"diff", "--staged"}
-	} else if args.Scope == "working" {
+	case "working":
 		diffArgs = []string{"diff"}
-	} else {
-		// all: staged + working
-		diffArgs = []string{"diff", "HEAD"} // includes both staged and unstaged
 	}
 
 	cmd := exec.CommandContext(cctx, "git", diffArgs...)
@@ -1345,12 +1343,13 @@ func (r *Registry) reviewChanges(ctx context.Context, raw json.RawMessage) (Resu
 		return Result{OK: true, Summary: "No changes to review", Content: "No uncommitted changes found."}, nil
 	}
 
-	cmd2 := exec.CommandContext(cctx, "git", "diff", "--name-status")
-	if args.Scope == "staged" {
+	var cmd2 *exec.Cmd
+	switch args.Scope {
+	case "staged":
 		cmd2 = exec.CommandContext(cctx, "git", "diff", "--staged", "--name-status")
-	} else if args.Scope == "working" {
+	case "working":
 		cmd2 = exec.CommandContext(cctx, "git", "diff", "--name-status")
-	} else {
+	default:
 		cmd2 = exec.CommandContext(cctx, "git", "diff", "HEAD", "--name-status")
 	}
 	cmd2.Dir = r.root
@@ -1369,14 +1368,14 @@ func (r *Registry) reviewChanges(ctx context.Context, raw json.RawMessage) (Resu
 	untracked := extractUntracked(string(statusShort))
 	if len(untracked) > 0 {
 		for _, u := range untracked {
-			b.WriteString(fmt.Sprintf("- %s (untracked)\n", u))
+			_, _ = fmt.Fprintf(&b, "- %s (untracked)\n", u)
 		}
 	} else {
 		b.WriteString("No untracked files.\n")
 	}
 	b.WriteString("\n")
 	b.WriteString("## Diff Summary\n\n")
-	b.WriteString(fmt.Sprintf("Total diff size: %d bytes across changed files.\n", len(diffText)))
+	_, _ = fmt.Fprintf(&b, "Total diff size: %d bytes across changed files.\n", len(diffText))
 	b.WriteString("\n## Full Diff\n\n```diff\n")
 	b.WriteString(diffText)
 	b.WriteString("```")
@@ -1847,7 +1846,6 @@ func (r *Registry) dockerComposeUp(ctx context.Context, raw json.RawMessage) (Re
 	}
 	cctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, "docker-compose", argv...)
 	if args.File != "" {
 		filePath, err := r.safePath(args.File)
 		if err != nil {
@@ -1855,6 +1853,7 @@ func (r *Registry) dockerComposeUp(ctx context.Context, raw json.RawMessage) (Re
 		}
 		argv = append([]string{"-f", filePath}, argv...)
 	}
+	cmd := exec.CommandContext(cctx, "docker-compose", argv...)
 	cmd.Dir = r.root
 	out, err := runWithKill(cctx, cmd)
 	res := Result{
@@ -1893,7 +1892,6 @@ func (r *Registry) dockerComposeDown(ctx context.Context, raw json.RawMessage) (
 	}
 	cctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, "docker-compose", argv...)
 	if args.File != "" {
 		filePath, err := r.safePath(args.File)
 		if err != nil {
@@ -1901,6 +1899,7 @@ func (r *Registry) dockerComposeDown(ctx context.Context, raw json.RawMessage) (
 		}
 		argv = append([]string{"-f", filePath}, argv...)
 	}
+	cmd := exec.CommandContext(cctx, "docker-compose", argv...)
 	cmd.Dir = r.root
 	out, err := runWithKill(cctx, cmd)
 	res := Result{
@@ -3972,9 +3971,7 @@ func (r *Registry) condaCreate(ctx context.Context, raw json.RawMessage) (Result
 	if args.Python != "" {
 		argv = append(argv, "python="+args.Python)
 	}
-	for _, pkg := range args.Packages {
-		argv = append(argv, pkg)
-	}
+	argv = append(argv, args.Packages...)
 	if args.Channel != "" {
 		argv = append(argv, "-c", args.Channel)
 	}

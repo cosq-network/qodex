@@ -12,7 +12,7 @@ func TestStoreSessionMessagesAndTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	sessionID, err := db.CreateSession(ctx, "/repo", "title", "model", "llama.cpp")
 	if err != nil {

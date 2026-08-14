@@ -60,11 +60,11 @@ func startLSP(ctx context.Context, sc lspServerCmd, root, relPath string) (*lsp.
 		return nil, fmt.Errorf("start %s: %w", sc.cmd, err)
 	}
 	if err := client.Initialize(root); err != nil {
-		client.Close()
+		_ = client.Close()
 		return nil, fmt.Errorf("initialize: %w", err)
 	}
 	if err := client.OpenDocument(relPath); err != nil {
-		client.Close()
+		_ = client.Close()
 		return nil, fmt.Errorf("open document: %w", err)
 	}
 	return client, nil
@@ -105,7 +105,7 @@ func (r *Registry) lspDiagnostics(ctx context.Context, raw json.RawMessage) (Res
 	if err != nil {
 		return Result{}, fmt.Errorf("LSP: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	diags, err := client.Diagnostics(args.Path)
 	if err != nil {
@@ -128,16 +128,16 @@ func (r *Registry) lspDiagnostics(ctx context.Context, raw json.RawMessage) (Res
 	}
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Diagnostics for %s (%d issues):\n", args.Path, len(diags)))
+	_, _ = fmt.Fprintf(&b, "Diagnostics for %s (%d issues):\n", args.Path, len(diags))
 	for _, d := range diags {
 		label := severityLabel[d.Severity]
 		if label == "" {
 			label = "unknown"
 		}
-		b.WriteString(fmt.Sprintf("  %s:%d:%d: [%s] %s",
-			args.Path, d.Range.Start.Line+1, d.Range.Start.Character+1, label, d.Message))
+		_, _ = fmt.Fprintf(&b, "  %s:%d:%d: [%s] %s",
+			args.Path, d.Range.Start.Line+1, d.Range.Start.Character+1, label, d.Message)
 		if d.Source != "" {
-			b.WriteString(fmt.Sprintf(" (%s)", d.Source))
+			_, _ = fmt.Fprintf(&b, " (%s)", d.Source)
 		}
 		b.WriteString("\n")
 	}
@@ -185,7 +185,7 @@ func (r *Registry) lspDefinition(ctx context.Context, raw json.RawMessage) (Resu
 	if err != nil {
 		return Result{}, fmt.Errorf("LSP: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	loc, err := client.GotoDefinition(args.Path, args.Line-1, args.Character-1)
 	if err != nil {
@@ -258,7 +258,7 @@ func (r *Registry) lspFindReferences(ctx context.Context, raw json.RawMessage) (
 	if err != nil {
 		return Result{}, fmt.Errorf("LSP: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	refs, err := client.FindReferences(args.Path, args.Line-1, args.Character-1)
 	if err != nil {
@@ -274,7 +274,7 @@ func (r *Registry) lspFindReferences(ctx context.Context, raw json.RawMessage) (
 	}
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("References at %s:%d:%d (%d total):\n", args.Path, args.Line, args.Character, len(refs)))
+	_, _ = fmt.Fprintf(&b, "References at %s:%d:%d (%d total):\n", args.Path, args.Line, args.Character, len(refs))
 	locations := make([]map[string]interface{}, 0, len(refs))
 
 	for _, ref := range refs {
@@ -293,7 +293,7 @@ func (r *Registry) lspFindReferences(ctx context.Context, raw json.RawMessage) (
 		if clean == ".." || strings.HasPrefix(clean, "../") {
 			return Result{}, fmt.Errorf("LSP result path escapes project root: %s", relFile)
 		}
-		b.WriteString(fmt.Sprintf("  %s:%d:%d\n", relFile, ref.Range.Start.Line+1, ref.Range.Start.Character+1))
+		_, _ = fmt.Fprintf(&b, "  %s:%d:%d\n", relFile, ref.Range.Start.Line+1, ref.Range.Start.Character+1)
 		locations = append(locations, map[string]interface{}{
 			"file": relFile,
 			"line": ref.Range.Start.Line + 1,

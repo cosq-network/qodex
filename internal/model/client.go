@@ -76,7 +76,7 @@ func (c *Client) Check(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		return fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
@@ -109,13 +109,13 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, temperature
 	}
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
 
-ch := make(chan StreamResult, 10)
+	ch := make(chan StreamResult, 10)
 	go func() {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		defer close(ch)
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
@@ -178,7 +178,7 @@ func (c *Client) DetectCapabilities(ctx context.Context) Capabilities {
 	if err != nil {
 		return caps
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 300 {
 		return caps
@@ -239,7 +239,7 @@ func (c *Client) chatWithTools(ctx context.Context, messages []Message, temperat
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -273,18 +273,18 @@ type Capabilities struct {
 }
 
 type chatRequest struct {
-	Model       string         `json:"model"`
-	Messages    []Message      `json:"messages"`
-	Temperature float64        `json:"temperature"`
-	TopP        float64        `json:"top_p"`
-	Stream      bool           `json:"stream"`
-	Tools       []ToolSchema   `json:"tools,omitempty"`
+	Model       string       `json:"model"`
+	Messages    []Message    `json:"messages"`
+	Temperature float64      `json:"temperature"`
+	TopP        float64      `json:"top_p"`
+	Stream      bool         `json:"stream"`
+	Tools       []ToolSchema `json:"tools,omitempty"`
 }
 
 type chatResponseChoice struct {
-	Index        int      `json:"index"`
-	Message      Message  `json:"message"`
-	FinishReason string   `json:"finish_reason"`
+	Index        int     `json:"index"`
+	Message      Message `json:"message"`
+	FinishReason string  `json:"finish_reason"`
 }
 
 type chatResponse struct {

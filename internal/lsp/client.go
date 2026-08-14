@@ -81,13 +81,13 @@ func NewClient(ctx context.Context, command string, args []string) (*Client, err
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		stdin.Close()
+		_ = stdin.Close()
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
 	cmd.Stderr = &strings.Builder{}
 
 	if err := cmd.Start(); err != nil {
-		stdin.Close()
+		_ = stdin.Close()
 		return nil, fmt.Errorf("start %s: %w", command, err)
 	}
 
@@ -118,8 +118,11 @@ func (c *Client) readMessage() (*rpcMessage, error) {
 		if line == "" {
 			break
 		}
-		if n, err := fmt.Sscanf(line, "Content-Length: %d", &contentLength); err == nil && n == 1 {
-			// ok
+		if strings.HasPrefix(strings.ToLower(line), "content-length:") {
+			n, err := fmt.Sscanf(line, "Content-Length: %d", &contentLength)
+			if err != nil || n != 1 {
+				return nil, fmt.Errorf("invalid content length header: %q", line)
+			}
 		}
 	}
 	if contentLength <= 0 {

@@ -33,7 +33,7 @@ func TestNewClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	if c.cmd == nil {
 		t.Fatal("expected cmd to be non-nil")
@@ -48,7 +48,7 @@ func TestInitialize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	if err := c.Initialize(t.TempDir()); err != nil {
 		t.Fatalf("Initialize: %v", err)
@@ -60,21 +60,23 @@ func TestDiagnostics(t *testing.T) {
 	dir := t.TempDir()
 	initGoModule(t, dir)
 
-	os.WriteFile(filepath.Join(dir, "main.go"), []byte(`package main
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(`package main
 
 func main() {
 	var x int
 	println(x)
 	println(y)
 }
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	ctx := context.Background()
 	c, err := NewClient(ctx, gopls, nil)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	if err := c.Initialize(dir); err != nil {
 		t.Fatalf("Initialize: %v", err)
@@ -108,25 +110,29 @@ func TestGotoDefinition(t *testing.T) {
 	dir := t.TempDir()
 	initGoModule(t, dir)
 
-	os.WriteFile(filepath.Join(dir, "greet.go"), []byte(`package main
+	if err := os.WriteFile(filepath.Join(dir, "greet.go"), []byte(`package main
 
 func Greet(name string) string {
 	return "Hello, " + name
 }
-`), 0o644)
-	os.WriteFile(filepath.Join(dir, "main.go"), []byte(`package main
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(`package main
 
 func main() {
 	Greet("world")
 }
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	ctx := context.Background()
 	c, err := NewClient(ctx, gopls, nil)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	if err := c.Initialize(dir); err != nil {
 		t.Fatalf("Initialize: %v", err)
@@ -150,7 +156,7 @@ func TestFindReferences(t *testing.T) {
 	dir := t.TempDir()
 	initGoModule(t, dir)
 
-	os.WriteFile(filepath.Join(dir, "main.go"), []byte(`package main
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(`package main
 
 func Hello() string {
 	return "hi"
@@ -160,14 +166,16 @@ func main() {
 	msg := Hello()
 	println(msg)
 }
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	ctx := context.Background()
 	c, err := NewClient(ctx, gopls, nil)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	if err := c.Initialize(dir); err != nil {
 		t.Fatalf("Initialize: %v", err)
@@ -220,14 +228,16 @@ func TestOpenDocument(t *testing.T) {
 	dir := t.TempDir()
 	initGoModule(t, dir)
 
-	os.WriteFile(filepath.Join(dir, "foo.go"), []byte("package main\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "foo.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	ctx := context.Background()
 	c, err := NewClient(ctx, gopls, nil)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	if err := c.Initialize(dir); err != nil {
 		t.Fatalf("Initialize: %v", err)
