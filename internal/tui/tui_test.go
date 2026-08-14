@@ -102,6 +102,36 @@ func TestBusyEnterIgnored(t *testing.T) {
 	}
 }
 
+func TestSlashCommands(t *testing.T) {
+	model := New(agent.New(agent.Options{}))
+	tests := []struct {
+		input         string
+		handled       bool
+		wantImmediate string
+		wantAction    string
+	}{
+		{input: "/help", handled: true, wantImmediate: "Slash commands:"},
+		{input: "/plan", handled: true, wantImmediate: "Plan state"},
+		{input: "/compact", handled: true, wantImmediate: "compacted"},
+		{input: "/commit release notes", handled: true, wantAction: "release notes"},
+		{input: "/undo HEAD~1", handled: true, wantAction: "HEAD~1"},
+		{input: "/skill go-testing", handled: false},
+		{input: "explain this", handled: false},
+	}
+	for _, tc := range tests {
+		handled, immediate, action := model.handleSlashCommand(tc.input)
+		if handled != tc.handled {
+			t.Errorf("%q handled = %v, want %v", tc.input, handled, tc.handled)
+		}
+		if tc.wantImmediate != "" && !strings.Contains(immediate, tc.wantImmediate) {
+			t.Errorf("%q immediate = %q, want substring %q", tc.input, immediate, tc.wantImmediate)
+		}
+		if tc.wantAction != "" && !strings.Contains(action, tc.wantAction) {
+			t.Errorf("%q action = %q, want substring %q", tc.input, action, tc.wantAction)
+		}
+	}
+}
+
 func TestResumeRendersHistory(t *testing.T) {
 	now := time.Now()
 	messages := []store.Message{

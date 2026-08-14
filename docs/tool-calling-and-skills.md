@@ -260,6 +260,8 @@ Heuristic: prompt matches skill triggers
 Model-assisted: model selects from compact skill summaries
 ```
 
+In the TUI, `/skills [FILTER]` lists discovered skills and `/help` lists all slash commands. `/plan` displays planning state, and `/compact` requests conversation compaction.
+
 The initial implementation should support explicit and heuristic loading. Model-assisted routing can come later.
 
 ## Skill Safety

@@ -37,6 +37,7 @@ As of August 14, 2026, the repo also reflects the following recent hardening wor
 - instruction rendering is bounded safely, and conditional Cursor rules are not applied globally
 - Windows managed-process status checks validate process exit state instead of trusting PID existence alone
 - regression tests cover the new MCP, Git workflow, instruction, and tool-pack boundaries; focused tests and vet pass, with broader runtime checks still dependent on host capabilities
+- MCP diagnostics now report command installation, secret-backed authentication readiness, protocol health, server identity, tool count, and advertised capabilities
 
 ## Phase 0: Foundation MVP
 
@@ -222,16 +223,18 @@ Goal: reduce product risk, close platform/runtime gaps, and improve confidence t
 | completed | Model download validation and progress | Runtime/CLI | Completed downloads are validated against the GGUF magic header, and `qodex setup` / `qodex models download` report live transfer progress. |
 | completed | Configurable llama.cpp startup flags | Runtime/CLI | Context size defaults to `runtime.context_tokens` and CPU threads default to the logical CPU count; `qodex serve start` and `qodex up` accept `--ctx` and `--threads` overrides. |
 | completed | Backend/setup UX hardening | Runtime/UX | Setup now uses backend-specific model contracts, atomic configuration writes, pinned llama.cpp artifacts with optional checksum verification, and readiness checks before reporting success. Arbitrary user-supplied llama.cpp models still require a manual download path. |
-| completed | MCP client integration | Extensibility/Safety | Added MCP stdio initialization, tool discovery, collision-safe namespaced registration, deadline-aware `tools/call`, network approval classification, and cleanup on startup/discovery failure. |
+| completed | MCP client integration | Extensibility/Safety | Added stdio and Streamable HTTP initialization, tool discovery, collision-safe namespaced registration, deadline-aware `tools/call`, bearer/API-key access tokens, network approval classification, and cleanup on startup/discovery failure. |
 | completed | Instruction-file interoperability | Context/Docs | Loads common `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, Cursor, and Copilot instruction files in parent-to-child order as bounded context-only guidance; conditional Cursor rules are not applied globally. |
 | completed | Skill-gated tool packs | Tools/Skills | Specialized tool schemas are exposed through active skill allowlists, reducing default model context without removing compatibility from the registry. |
 | completed | Git workflow hardening | Git/Tools | Added high-signal workspace summaries, path-scoped commits that protect unrelated staged work, branch/worktree management, tracked-worktree snapshots kept outside Git status, explicit restoration, and history-preserving undo. |
+| completed | MCP server diagnostics | Extensibility/QA | `qodex mcp list` and `qodex mcp doctor [NAME]` check command installation, environment-backed authentication, MCP initialization/ping, tool discovery, server identity, and capabilities with actionable hints. |
+| completed | MCP trust and permission controls | Safety/Extensibility | MCP servers support `ask`, `trusted`, and `blocked` trust states; per-tool `allow`, `ask`, and `deny` rules override the global network policy, including under `--yes`. |
 | in-progress | Platform validation beyond build/test coverage | Runtime/QA | CI now exercises builds, package tests, and CLI smoke commands across Linux, macOS, and Windows. Native Windows backend behavior and external-tool-dependent features still need real-environment validation. |
 | in-progress | Production readiness hardening | Product/Safety | Setup, managed runtime failure handling, MCP approval boundaries, and Git mutation workflows are hardened; remaining work is broader real-repository end-to-end validation, external toolchain coverage, and operational polish. |
 
 ## Current Priority Order
 
 1. Expand validation of platform-specific runtime behavior, especially native Windows and external-tool-dependent features.
-2. Add MCP ecosystem validation and safe server discovery/installation workflows.
+2. Add broader MCP ecosystem validation, transport coverage, and safe server discovery/installation workflows.
 3. Improve production-readiness signals through stronger end-to-end validation around real repositories and external toolchains.
 4. Continue reducing code/docs drift by keeping tool exposure, setup behavior, platform support claims, and release packaging expectations in sync.

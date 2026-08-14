@@ -333,6 +333,10 @@ You can ask Qodex to use a skill explicitly:
 Run the failing tests and fix the issue.
 ```
 
+## TUI slash commands
+
+The interactive TUI supports `/help`, `/skills [FILTER]`, `/plan`, `/compact`, `/mcp [NAME]`, `/commit [MESSAGE]`, and `/undo [COMMIT]`. Git commands are translated into normal agent requests, so configured approval and audit policies still apply. `/skill <name>` remains available for explicit skill routing.
+
 ## Sessions
 
 Qodex keeps MVP session history in SQLite at `.qodex/qodex.db` by default. You can list and resume sessions.

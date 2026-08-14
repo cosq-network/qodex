@@ -56,10 +56,26 @@ type MCPConfig struct {
 }
 
 type MCPServerConfig struct {
-	Command string
-	Args    []string
-	Env     map[string]string
-	Enabled bool
+	Transport   string
+	Command     string
+	Args        []string
+	URL         string
+	Headers     map[string]string
+	Env         map[string]string
+	Auth        MCPAuthConfig
+	Trust       string
+	Permissions map[string]string
+	Enabled     bool
+}
+
+// MCPAuthConfig describes how a stdio server receives a credential without
+// storing the secret in Qodex configuration. TokenEnv is read from Qodex's
+// environment and copied to PassEnv for the child process.
+type MCPAuthConfig struct {
+	Type     string
+	TokenEnv string
+	PassEnv  string
+	Header   string
 }
 
 func Load(path string) (Config, error) {
@@ -185,10 +201,23 @@ type fileMCPConfig struct {
 }
 
 type fileMCPServerConfig struct {
-	Command string            `toml:"command"`
-	Args    []string          `toml:"args"`
-	Env     map[string]string `toml:"env"`
-	Enabled *bool             `toml:"enabled"`
+	Transport   string            `toml:"transport"`
+	Command     string            `toml:"command"`
+	Args        []string          `toml:"args"`
+	URL         string            `toml:"url"`
+	Headers     map[string]string `toml:"headers"`
+	Env         map[string]string `toml:"env"`
+	Auth        fileMCPAuthConfig `toml:"auth"`
+	Trust       string            `toml:"trust"`
+	Permissions map[string]string `toml:"permissions"`
+	Enabled     *bool             `toml:"enabled"`
+}
+
+type fileMCPAuthConfig struct {
+	Type     string `toml:"type"`
+	TokenEnv string `toml:"token_env"`
+	PassEnv  string `toml:"pass_env"`
+	Header   string `toml:"header"`
 }
 
 func (f fileConfig) mergeInto(cfg *Config) {
@@ -245,7 +274,12 @@ func (f fileConfig) mergeInto(cfg *Config) {
 		if server.Enabled != nil {
 			enabled = *server.Enabled
 		}
-		cfg.MCP.Servers[name] = MCPServerConfig{Command: server.Command, Args: server.Args, Env: server.Env, Enabled: enabled}
+		cfg.MCP.Servers[name] = MCPServerConfig{
+			Transport: server.Transport, Command: server.Command, Args: server.Args, URL: server.URL,
+			Headers: server.Headers, Env: server.Env,
+			Auth:  MCPAuthConfig{Type: server.Auth.Type, TokenEnv: server.Auth.TokenEnv, PassEnv: server.Auth.PassEnv, Header: server.Auth.Header},
+			Trust: server.Trust, Permissions: server.Permissions, Enabled: enabled,
+		}
 	}
 }
 
@@ -357,8 +391,43 @@ func (c Config) Validate() error {
 		return fmt.Errorf("agent.tool_calls must be prompt or native")
 	}
 	for name, server := range c.MCP.Servers {
-		if strings.TrimSpace(name) == "" || strings.TrimSpace(server.Command) == "" {
-			return fmt.Errorf("mcp server names and commands are required")
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("mcp server names are required")
+		}
+		transport := server.Transport
+		if transport == "" {
+			transport = "stdio"
+		}
+		if transport != "stdio" && transport != "streamable-http" {
+			return fmt.Errorf("mcp.servers.%s.transport must be stdio or streamable-http", name)
+		}
+		if transport == "stdio" && strings.TrimSpace(server.Command) == "" {
+			return fmt.Errorf("mcp server %s requires a command for stdio transport", name)
+		}
+		if transport == "streamable-http" {
+			parsed, err := url.ParseRequestURI(server.URL)
+			if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+				return fmt.Errorf("mcp.servers.%s.url must be an absolute http(s) URL", name)
+			}
+		}
+		if server.Trust != "" && server.Trust != "ask" && server.Trust != "trusted" && server.Trust != "blocked" {
+			return fmt.Errorf("mcp.servers.%s.trust must be ask, trusted, or blocked", name)
+		}
+		if server.Auth.Type != "" && server.Auth.Type != "none" && server.Auth.Type != "bearer" && server.Auth.Type != "api_key" && server.Auth.Type != "oauth" {
+			return fmt.Errorf("mcp.servers.%s.auth.type must be none, bearer, api_key, or oauth", name)
+		}
+		if server.Auth.Type != "" && server.Auth.Type != "none" && strings.TrimSpace(server.Auth.TokenEnv) == "" {
+			return fmt.Errorf("mcp.servers.%s.auth.token_env is required when authentication is enabled", name)
+		}
+		for tool, policy := range server.Permissions {
+			if policy != "ask" && policy != "allow" && policy != "deny" {
+				return fmt.Errorf("mcp.servers.%s.permissions.%s must be ask, allow, or deny", name, tool)
+			}
+		}
+		for field, value := range map[string]string{"token_env": server.Auth.TokenEnv, "pass_env": server.Auth.PassEnv} {
+			if strings.ContainsAny(value, "=\r\n") {
+				return fmt.Errorf("mcp.servers.%s.auth.%s is not a valid environment variable name", name, field)
+			}
 		}
 	}
 	for key, value := range map[string]string{

@@ -18,7 +18,7 @@ The repository includes a fully featured coding agent with:
 - SQLite session/tool event storage with WAL mode, migrations, and approval persistence.
 - Session resume with full tool history reconstruction (TUI via `sessions resume`, non-interactive via `run --session`), plus JSON export.
 - Approval gates for write, shell, and network tools with inline diff preview and `--yes` auto-approval.
-- MCP stdio client support: configured MCP servers contribute namespaced tools while retaining Qodex approval and audit behavior.
+- MCP client support for stdio and Streamable HTTP: configured MCP servers contribute namespaced tools while retaining Qodex approval and audit behavior; `qodex mcp doctor` checks installation, environment-backed authentication, protocol health, server capabilities, and tool discovery.
 - Interoperable repository instructions from `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, Cursor rules, and GitHub Copilot instructions.
 - Planning state tracking (current task, inspected files, actions taken) in the system prompt.
 - Context compaction (keeps the last 8 messages when approaching the token limit).
@@ -54,6 +54,8 @@ Global flags (available on every command):
 | `run PROMPT` | Run a one-shot agent prompt; `--session ID` resumes an existing session |
 | `review` | Analyze uncommitted git changes and produce a structured code review |
 | `doctor` | Check configuration and local model connectivity (backend install, model file, server, live endpoint probe) |
+| `mcp list` | List configured MCP servers and authentication modes |
+| `mcp doctor [NAME]` | Diagnose MCP installation, authentication, protocol health, tools, and capabilities |
 | `skills list` | List discovered skills as `name<TAB>path` |
 | `skills show NAME` | Print a skill's content |
 | `sessions list` | List recent sessions |
@@ -99,7 +101,7 @@ Unknown keys are rejected, and a project file inherits anything not set from use
 | `agent.skill_routing` | `auto` | Skill selection: `auto` (heuristic) or `model` (model-assisted with heuristic fallback) |
 | `agent.tool_calls` | `prompt` | Tool-call mechanism: `prompt` (inline JSON) or `native` (OpenAI `tools`/`tool_calls`; streaming disabled) |
 
-MCP servers can be configured under `[mcp.servers.<name>]` with `command`, `args`, `env`, and optional `enabled = false`. See [MCP Integration](docs/mcp.md).
+MCP servers can be configured under `[mcp.servers.<name>]` with stdio or Streamable HTTP transport, secret-by-environment authentication, trust, and per-tool permissions. Use `qodex mcp doctor` to verify installation, authentication, protocol health, discovered tools, and server capabilities. See [MCP Integration](docs/mcp.md).
 
 Example configs are in [`examples/`](examples/).
 
@@ -161,6 +163,10 @@ Each skill is a directory with a `SKILL.md` plus a `skill.toml` declaring `name`
 - **Context compaction** estimates token usage before each step and, above 70% of `runtime.context_tokens`, keeps the system prompt plus the last 8 messages with a "compacted" note.
 - **Tool calling** runs in one of two modes: `prompt` (default) parses inline JSON `{"tool_call": ...}` emitted by the model with a validation/repair loop; `native` sends an OpenAI `tools`/`tool_calls` schema (streaming disabled).
 - **Streaming** renders tokens as they arrive via SSE when capability detection confirms the endpoint supports it.
+
+### TUI slash commands
+
+The interactive TUI provides `/help`, `/skills [FILTER]`, `/plan`, and `/compact` for local help, skill discovery, planning state, and context management. `/mcp [NAME]` runs MCP diagnostics. `/commit [MESSAGE]` and `/undo [COMMIT]` ask the agent to perform focused Git operations through the normal approval and audit workflow. Existing `/skill <name>` prompts remain supported for explicit skill routing.
 
 ## Sessions and Storage
 
@@ -404,6 +410,8 @@ The CLI should treat this as an OpenAI-compatible base URL and should not requir
 ./qodex version
 ./qodex setup
 ./qodex doctor
+./qodex mcp list
+./qodex mcp doctor
 ./qodex config list
 ./qodex status
 ./qodex run "Explain this repository structure"

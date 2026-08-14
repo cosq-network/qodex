@@ -17,6 +17,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/benoybose/qodex/internal/agent"
+	"github.com/benoybose/qodex/internal/mcp"
+	"github.com/benoybose/qodex/internal/skills"
 	"github.com/benoybose/qodex/internal/store"
 )
 
@@ -54,6 +56,11 @@ type responseMsg struct {
 	prompt string
 	text   string
 	err    error
+}
+
+type slashResultMsg struct {
+	text string
+	err  error
 }
 
 type streamMsg string
@@ -262,6 +269,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.input.Reset()
+			displayPrompt := prompt
+			if handled, immediate, actionPrompt := m.handleSlashCommand(prompt); handled {
+				m.history = append(m.history, "", userStyle.Render("You:"), displayPrompt)
+				if immediate != "" {
+					m.history = append(m.history, immediate)
+					m.refresh()
+					return m, nil
+				}
+				if actionPrompt == "" {
+					m.refresh()
+					return m, nil
+				}
+				if strings.HasPrefix(actionPrompt, "__slash_skills:") {
+					m.refresh()
+					return m, runSlashSkills(m.agent, strings.TrimPrefix(actionPrompt, "__slash_skills:"))
+				}
+				if strings.HasPrefix(actionPrompt, "__slash_mcp:") {
+					m.refresh()
+					return m, runSlashMCP(m.agent, strings.TrimPrefix(actionPrompt, "__slash_mcp:"))
+				}
+				prompt = actionPrompt
+			}
 			m.busy = true
 			m.lastErr = ""
 			m.streamBuffer.Reset()
@@ -342,6 +371,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refresh()
 		return m, nil
+
+	case slashResultMsg:
+		m.busy = false
+		if msg.err != nil {
+			m.history = append(m.history, errorStyle.Render("Error: "+msg.err.Error()))
+		} else {
+			m.history = append(m.history, msg.text)
+		}
+		m.refresh()
+		return m, nil
 	}
 
 	if m.pending != nil {
@@ -354,6 +393,135 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m *Model) handleSlashCommand(input string) (handled bool, immediate string, actionPrompt string) {
+	parts := strings.Fields(input)
+	if len(parts) == 0 || !strings.HasPrefix(parts[0], "/") {
+		return false, "", ""
+	}
+	command := strings.ToLower(parts[0])
+	args := strings.TrimSpace(strings.TrimPrefix(input, parts[0]))
+	switch command {
+	case "/skill":
+		// Preserve the existing explicit skill-routing prompt behavior.
+		return false, "", ""
+	case "/help":
+		return true, slashHelp(), ""
+	case "/skills":
+		m.busy = true
+		return true, "", "__slash_skills:" + args
+	case "/plan":
+		return true, m.agent.PlanSummary(), ""
+	case "/compact":
+		m.agent.CompactContext()
+		return true, helpStyle.Render("Conversation context compacted."), ""
+	case "/mcp":
+		m.busy = true
+		return true, "", "__slash_mcp:" + args
+	case "/commit":
+		if args == "" {
+			args = "Create a focused commit from the current intended changes with a detailed commit message."
+		} else {
+			args = fmt.Sprintf("Create a focused Git commit with this commit message: %q", args)
+		}
+		return true, "", args
+	case "/undo":
+		if args == "" {
+			args = "Use git_undo to revert the latest commit, preserving history."
+		} else {
+			args = fmt.Sprintf("Use git_undo to revert commit %q, preserving history.", args)
+		}
+		return true, "", args
+	default:
+		return true, errorStyle.Render("Unknown slash command. Type /help for available commands."), ""
+	}
+}
+
+func slashHelp() string {
+	return helpStyle.Render(strings.TrimSpace(`Slash commands:
+
+/help              Show this help
+/skills            List discovered skills
+/plan              Show the current task and recorded actions
+/compact           Compact the conversation context
+/mcp [NAME]        Diagnose configured MCP servers
+/commit [MESSAGE]  Create a focused Git commit through the agent
+/undo [COMMIT]     Revert a commit through the agent
+
+Use /skill <name> in a prompt to explicitly route a skill.`))
+}
+
+func runSlashSkills(a *agent.Agent, filter string) tea.Cmd {
+	return func() tea.Msg {
+		found, err := skills.Discover(a.ProjectRoot())
+		if err != nil {
+			return slashResultMsg{err: err}
+		}
+		filter = strings.TrimSpace(strings.ToLower(filter))
+		var b strings.Builder
+		b.WriteString("Discovered skills:\n")
+		count := 0
+		for _, skill := range found {
+			if filter != "" && !strings.Contains(strings.ToLower(skill.Name), filter) {
+				continue
+			}
+			fmt.Fprintf(&b, "- %s (%s)\n", skill.Name, skill.Path)
+			count++
+		}
+		if count == 0 {
+			b.WriteString("No matching skills found.\n")
+		}
+		return slashResultMsg{text: b.String()}
+	}
+}
+
+func runSlashMCP(a *agent.Agent, only string) tea.Cmd {
+	return func() tea.Msg {
+		cfg := a.Config()
+		names := make([]string, 0, len(cfg.MCP.Servers))
+		for name := range cfg.MCP.Servers {
+			if only == "" || name == only {
+				names = append(names, name)
+			}
+		}
+		if only != "" && len(names) == 0 {
+			return slashResultMsg{err: fmt.Errorf("MCP server %q is not configured", only)}
+		}
+		sort.Strings(names)
+		var b strings.Builder
+		for _, name := range names {
+			server := cfg.MCP.Servers[name]
+			if !server.Enabled {
+				fmt.Fprintf(&b, "MCP %s: disabled\n", name)
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			diag := mcp.Diagnose(ctx, mcp.ServerConfig{
+				Transport: server.Transport,
+				Command:   server.Command,
+				Args:      server.Args,
+				Endpoint:  server.URL,
+				Headers:   server.Headers,
+				Env:       server.Env,
+				Auth:      mcp.AuthConfig{Type: server.Auth.Type, TokenEnv: server.Auth.TokenEnv, PassEnv: server.Auth.PassEnv, Header: server.Auth.Header},
+			})
+			cancel()
+			if !diag.Healthy {
+				fmt.Fprintf(&b, "MCP %s: failed\n  error: %s\n  hint: %s\n", name, diag.Error, diag.Hint)
+				continue
+			}
+			endpoint := diag.ResolvedCommand
+			if diag.Transport == "streamable-http" {
+				endpoint = diag.Endpoint
+			}
+			fmt.Fprintf(&b, "MCP %s: ok (transport=%s endpoint=%s protocol=%s tools=%d)\n", name, diag.Transport, endpoint, diag.Protocol, diag.ToolCount)
+		}
+		if len(names) == 0 {
+			b.WriteString("No MCP servers configured.\n")
+		}
+		return slashResultMsg{text: b.String()}
+	}
+}
+
 func (m Model) View() string {
 	status := ""
 	if m.busy {
@@ -361,7 +529,7 @@ func (m Model) View() string {
 	} else if m.pending != nil {
 		status = approvalStyle.Render("Approval pending: y approve | n deny | Ctrl+C quit")
 	} else {
-		status = helpStyle.Render("Enter submit | Ctrl+C quit | @ reference files")
+		status = helpStyle.Render("Enter submit | /help commands | Ctrl+C quit | @ reference files")
 	}
 	if m.lastErr != "" && !m.busy && m.pending == nil {
 		status = errorStyle.Render("Last error: "+compact(m.lastErr, 80)) + "\n" + status

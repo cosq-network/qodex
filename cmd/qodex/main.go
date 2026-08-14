@@ -102,6 +102,7 @@ No configuration found? Run 'qodex setup' for an interactive setup wizard.`,
 	cmd.AddCommand(runCmd(&cfgPath, &yes))
 	cmd.AddCommand(chatCmd(&cfgPath, &yes))
 	cmd.AddCommand(doctorCmd(&cfgPath))
+	cmd.AddCommand(mcpCmd(&cfgPath))
 	cmd.AddCommand(skillsCmd())
 	cmd.AddCommand(sessionsCmd(&cfgPath, &yes))
 	cmd.AddCommand(reviewCmd(&cfgPath, &yes))
@@ -414,7 +415,7 @@ func doctorCmd(cfgPath *string) *cobra.Command {
 					return fmt.Errorf("model endpoint check failed: %w", err)
 				}
 				fmt.Println("Model endpoint: ok")
-				return nil
+				return printMCPDiagnostics(cmd.Context(), cfg, "")
 			}
 
 			installRoot := getInstallRoot()
@@ -453,9 +454,114 @@ func doctorCmd(cfgPath *string) *cobra.Command {
 				return fmt.Errorf("model endpoint check failed: %w", err)
 			}
 			fmt.Println("Model endpoint: ok")
-			return nil
+			return printMCPDiagnostics(cmd.Context(), cfg, "")
 		},
 	}
+}
+
+func mcpCmd(cfgPath *string) *cobra.Command {
+	cmd := &cobra.Command{Use: "mcp", Short: "Inspect configured MCP servers"}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List configured MCP servers",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(*cfgPath)
+			if err != nil {
+				return err
+			}
+			names := make([]string, 0, len(cfg.MCP.Servers))
+			for name := range cfg.MCP.Servers {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				server := cfg.MCP.Servers[name]
+				authType := server.Auth.Type
+				if authType == "" {
+					authType = "none"
+				}
+				state := "enabled"
+				if !server.Enabled {
+					state = "disabled"
+				}
+				transport := server.Transport
+				if transport == "" {
+					transport = "stdio"
+				}
+				endpoint := server.Command
+				if transport == "streamable-http" {
+					endpoint = server.URL
+				}
+				trust := server.Trust
+				if trust == "" {
+					trust = "ask"
+				}
+				fmt.Printf("%s\t%s\ttransport=%s\tauth=%s\ttrust=%s\t%s\n", name, state, transport, authType, trust, endpoint)
+			}
+			return nil
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "doctor [NAME]",
+		Short: "Diagnose MCP server installation, authentication, health, and capabilities",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(*cfgPath)
+			if err != nil {
+				return err
+			}
+			name := ""
+			if len(args) == 1 {
+				name = args[0]
+			}
+			return printMCPDiagnostics(cmd.Context(), cfg, name)
+		},
+	})
+	return cmd
+}
+
+func printMCPDiagnostics(ctx context.Context, cfg config.Config, only string) error {
+	names := make([]string, 0, len(cfg.MCP.Servers))
+	for name := range cfg.MCP.Servers {
+		if only == "" || only == name {
+			names = append(names, name)
+		}
+	}
+	if only != "" && len(names) == 0 {
+		return fmt.Errorf("MCP server %q is not configured", only)
+	}
+	sort.Strings(names)
+	var failures []string
+	for _, name := range names {
+		server := cfg.MCP.Servers[name]
+		if !server.Enabled {
+			fmt.Printf("MCP %s: disabled\n", name)
+			continue
+		}
+		diag := mcp.Diagnose(ctx, mcp.ServerConfig{Transport: server.Transport, Command: server.Command, Args: server.Args, Endpoint: server.URL, Headers: server.Headers, Env: server.Env, Auth: mcp.AuthConfig{Type: server.Auth.Type, TokenEnv: server.Auth.TokenEnv, PassEnv: server.Auth.PassEnv, Header: server.Auth.Header}})
+		if !diag.Healthy {
+			fmt.Printf("MCP %s: failed\n  error: %s\n  hint: %s\n", name, diag.Error, diag.Hint)
+			failures = append(failures, name)
+			continue
+		}
+		capabilities := "none"
+		if len(diag.Capabilities) > 0 && string(diag.Capabilities) != "null" && string(diag.Capabilities) != "{}" {
+			capabilities = string(diag.Capabilities)
+		}
+		serverLabel := diag.ServerInfo.Name
+		if diag.ServerInfo.Version != "" {
+			serverLabel += " " + diag.ServerInfo.Version
+		}
+		endpoint := diag.ResolvedCommand
+		if diag.Transport == "streamable-http" {
+			endpoint = diag.Endpoint
+		}
+		fmt.Printf("MCP %s: ok (transport=%s, endpoint=%s, protocol=%s, tools=%d, server=%s, capabilities=%s)\n", name, diag.Transport, endpoint, diag.Protocol, diag.ToolCount, serverLabel, capabilities)
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("MCP diagnostics failed for: %s", strings.Join(failures, ", "))
+	}
+	return nil
 }
 
 func skillsCmd() *cobra.Command {
@@ -723,11 +829,38 @@ func buildRuntime(cfgPath string, yes bool, tuiMode bool, sessionID int64) (*run
 	registry := tools.NewRegistry(cfg.ProjectRoot)
 	var mcpClients []*mcp.Client
 	mcpToolOwners := map[string]string{}
+	mcpToolPolicies := map[string]string{}
 	for serverName, serverCfg := range cfg.MCP.Servers {
 		if !serverCfg.Enabled {
 			continue
 		}
-		client, err := mcp.Start(context.Background(), mcp.ServerConfig{Command: serverCfg.Command, Args: serverCfg.Args, Env: serverCfg.Env})
+		trust := serverCfg.Trust
+		if trust == "" {
+			trust = "ask"
+		}
+		if trust == "blocked" {
+			continue
+		}
+		if trust == "ask" && !approver.Approve(agent.ApprovalRequest{Kind: "mcp_trust", Summary: fmt.Sprintf("Trust MCP server %q (%s)?", serverName, serverCfg.Command+serverCfg.URL)}) {
+			_ = db.Close()
+			return nil, fmt.Errorf("MCP server %q was not trusted", serverName)
+		}
+		serverConfig := mcp.ServerConfig{
+			Transport: serverCfg.Transport,
+			Command:   serverCfg.Command,
+			Args:      serverCfg.Args,
+			Endpoint:  serverCfg.URL,
+			Headers:   serverCfg.Headers,
+			Env:       serverCfg.Env,
+			Auth:      mcp.AuthConfig{Type: serverCfg.Auth.Type, TokenEnv: serverCfg.Auth.TokenEnv, PassEnv: serverCfg.Auth.PassEnv, Header: serverCfg.Auth.Header},
+		}
+		var client *mcp.Client
+		var err error
+		if serverConfig.Transport == "streamable-http" {
+			client, err = mcp.StartHTTP(context.Background(), serverConfig)
+		} else {
+			client, err = mcp.Start(context.Background(), serverConfig)
+		}
 		if err != nil {
 			for _, started := range mcpClients {
 				_ = started.Close()
@@ -758,6 +891,9 @@ func buildRuntime(cfgPath string, yes bool, tuiMode bool, sessionID int64) (*run
 				return nil, fmt.Errorf("MCP tool name collision: %q from %s conflicts with %s", toolName, serverName+"/"+remoteTool.Name, owner)
 			}
 			mcpToolOwners[toolName] = serverName + "/" + remoteTool.Name
+			if policy := serverCfg.Permissions[remoteTool.Name]; policy != "" {
+				mcpToolPolicies[toolName] = policy
+			}
 			description := fmt.Sprintf("MCP tool %s/%s: %s", serverName, remoteTool.Name, remoteTool.Description)
 			registry.RegisterExternal(toolName, description, "network", remoteTool.InputSchema, func(ctx context.Context, args json.RawMessage) (tools.Result, error) {
 				content, isError, err := client.CallTool(ctx, remoteTool.Name, args)
@@ -773,16 +909,17 @@ func buildRuntime(cfgPath string, yes bool, tuiMode bool, sessionID int64) (*run
 		}
 	}
 	agt := agent.New(agent.Options{
-		Config:       cfg,
-		Client:       client,
-		Tools:        registry,
-		Store:        db,
-		Skills:       skillSet,
-		Instructions: instructions,
-		Approver:     approver,
-		MaxSteps:     cfg.Agent.MaxSteps,
-		SessionID:    sessionID,
-		DebugWriter:  debugLog,
+		Config:          cfg,
+		Client:          client,
+		Tools:           registry,
+		Store:           db,
+		Skills:          skillSet,
+		Instructions:    instructions,
+		MCPToolPolicies: mcpToolPolicies,
+		Approver:        approver,
+		MaxSteps:        cfg.Agent.MaxSteps,
+		SessionID:       sessionID,
+		DebugWriter:     debugLog,
 	})
 	if tuiMode {
 		probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)

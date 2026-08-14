@@ -24,38 +24,40 @@ type PlanState struct {
 }
 
 type Options struct {
-	Config       config.Config
-	Client       *model.Client
-	Tools        *tools.Registry
-	Store        *store.Store
-	Skills       []skills.Skill
-	Instructions []skills.Instruction
-	Approver     Approver
-	Observer     Observer
-	MaxSteps     int
-	SessionID    int64
-	DebugWriter  io.Writer // optional; if set, diagnostic messages are written here too
+	Config          config.Config
+	Client          *model.Client
+	Tools           *tools.Registry
+	Store           *store.Store
+	Skills          []skills.Skill
+	Instructions    []skills.Instruction
+	MCPToolPolicies map[string]string
+	Approver        Approver
+	Observer        Observer
+	MaxSteps        int
+	SessionID       int64
+	DebugWriter     io.Writer // optional; if set, diagnostic messages are written here too
 }
 
 type Agent struct {
-	cfg            config.Config
-	client         *model.Client
-	tools          *tools.Registry
-	store          *store.Store
-	skills         []skills.Skill
-	approver       Approver
-	observer       Observer
-	maxSteps       int
-	sessionID      int64
-	messages       []model.Message
-	streamCallback func(string)
-	streaming      bool
-	planState      PlanState
-	allowedTools   []string
-	selectedSkills []skills.Skill
-	instructions   []skills.Instruction
-	debugWriter    io.Writer
-	probeCancel    context.CancelFunc
+	cfg             config.Config
+	client          *model.Client
+	tools           *tools.Registry
+	store           *store.Store
+	skills          []skills.Skill
+	approver        Approver
+	observer        Observer
+	maxSteps        int
+	sessionID       int64
+	messages        []model.Message
+	streamCallback  func(string)
+	streaming       bool
+	planState       PlanState
+	allowedTools    []string
+	selectedSkills  []skills.Skill
+	instructions    []skills.Instruction
+	mcpToolPolicies map[string]string
+	debugWriter     io.Writer
+	probeCancel     context.CancelFunc
 }
 
 type ApprovalRequest struct {
@@ -99,22 +101,63 @@ func New(opts Options) *Agent {
 		maxSteps = 12
 	}
 	return &Agent{
-		cfg:          opts.Config,
-		client:       opts.Client,
-		tools:        opts.Tools,
-		store:        opts.Store,
-		skills:       opts.Skills,
-		instructions: opts.Instructions,
-		approver:     opts.Approver,
-		observer:     opts.Observer,
-		maxSteps:     maxSteps,
-		sessionID:    opts.SessionID,
-		debugWriter:  opts.DebugWriter,
+		cfg:             opts.Config,
+		client:          opts.Client,
+		tools:           opts.Tools,
+		store:           opts.Store,
+		skills:          opts.Skills,
+		instructions:    opts.Instructions,
+		mcpToolPolicies: opts.MCPToolPolicies,
+		approver:        opts.Approver,
+		observer:        opts.Observer,
+		maxSteps:        maxSteps,
+		sessionID:       opts.SessionID,
+		debugWriter:     opts.DebugWriter,
 	}
 }
 
 func (a *Agent) ProjectRoot() string {
 	return a.cfg.ProjectRoot
+}
+
+func (a *Agent) Config() config.Config {
+	return a.cfg
+}
+
+func (a *Agent) PlanSummary() string {
+	var b strings.Builder
+	b.WriteString("Plan state\n")
+	if a.planState.CurrentTask == "" {
+		b.WriteString("Task: none\n")
+	} else {
+		b.WriteString("Task: ")
+		b.WriteString(a.planState.CurrentTask)
+		b.WriteByte('\n')
+	}
+	if len(a.planState.FilesInspected) > 0 {
+		b.WriteString("Files inspected:\n")
+		for _, file := range a.planState.FilesInspected {
+			b.WriteString("- ")
+			b.WriteString(file)
+			b.WriteByte('\n')
+		}
+	}
+	if len(a.planState.ActionsTaken) > 0 {
+		b.WriteString("Actions taken:\n")
+		for _, action := range a.planState.ActionsTaken {
+			b.WriteString("- ")
+			b.WriteString(action)
+			b.WriteByte('\n')
+		}
+	}
+	if len(a.planState.FilesInspected) == 0 && len(a.planState.ActionsTaken) == 0 {
+		b.WriteString("No files or actions recorded yet.\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func (a *Agent) CompactContext() {
+	a.compactContext()
 }
 
 func (a *Agent) SetApprover(approver Approver) {
@@ -533,7 +576,7 @@ func (a *Agent) executeTool(ctx context.Context, call toolCall) (string, error) 
 	diff, _ := a.tools.DiffPreview(call.Name, call.Arguments)
 	summary := call.Name + " " + string(call.Arguments)
 	a.emit(Event{Type: "tool_requested", Tool: call.Name, Effect: effect, Summary: summary, Detail: diff})
-	approved, denied := a.approvalPolicy(effect, call.Arguments)
+	approved, denied := a.approvalPolicy(call.Name, effect, call.Arguments)
 	isApprovalRequired := effect == "write" || effect == "shell" || effect == "network" || effect == "destructive"
 	if isApprovalRequired {
 		if denied {
@@ -707,8 +750,11 @@ func (a *Agent) emit(event Event) {
 	}
 }
 
-func (a *Agent) approvalPolicy(effect string, raw json.RawMessage) (approve bool, deny bool) {
+func (a *Agent) approvalPolicy(toolName, effect string, raw json.RawMessage) (approve bool, deny bool) {
 	cfg := a.cfg.Approval
+	if policy, ok := a.mcpToolPolicies[toolName]; ok {
+		return policyFromConfig(policy)
+	}
 	if cfg.AutoApprove {
 		return true, false
 	}

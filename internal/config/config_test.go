@@ -178,6 +178,11 @@ enabled = true
 
 [mcp.servers.files.env]
 MODE = "test"
+
+[mcp.servers.files.auth]
+type = "bearer"
+token_env = "FILES_TOKEN"
+pass_env = "MCP_ACCESS_TOKEN"
 `
 	if err := os.WriteFile(filepath.Join(root, ".qodex", "config.toml"), []byte(data), 0o644); err != nil {
 		t.Fatal(err)
@@ -187,8 +192,30 @@ MODE = "test"
 		t.Fatal(err)
 	}
 	server, ok := cfg.MCP.Servers["files"]
-	if !ok || server.Command != "filesystem-server" || !server.Enabled || server.Env["MODE"] != "test" {
+	if !ok || server.Command != "filesystem-server" || !server.Enabled || server.Env["MODE"] != "test" || server.Auth.Type != "bearer" || server.Auth.TokenEnv != "FILES_TOKEN" || server.Auth.PassEnv != "MCP_ACCESS_TOKEN" {
 		t.Fatalf("unexpected MCP config: %+v", cfg.MCP.Servers)
+	}
+}
+
+func TestValidateRejectsMissingMCPAuthTokenEnv(t *testing.T) {
+	cfg := Defaults("/test")
+	cfg.MCP.Servers["files"] = MCPServerConfig{Command: "files", Auth: MCPAuthConfig{Type: "bearer"}}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "token_env") {
+		t.Fatalf("expected token_env validation error, got %v", err)
+	}
+}
+
+func TestValidateAcceptsStreamableHTTPMCPServer(t *testing.T) {
+	cfg := Defaults("/test")
+	cfg.MCP.Servers["remote"] = MCPServerConfig{
+		Transport:   "streamable-http",
+		URL:         "https://mcp.example.test/mcp",
+		Auth:        MCPAuthConfig{Type: "api_key", TokenEnv: "MCP_KEY", Header: "X-API-Key"},
+		Trust:       "trusted",
+		Permissions: map[string]string{"search": "allow"},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected valid Streamable HTTP config, got %v", err)
 	}
 }
 
