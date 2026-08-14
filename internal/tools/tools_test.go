@@ -12,7 +12,7 @@ import (
 
 func TestSafePathRejectsEscape(t *testing.T) {
 	registry := NewRegistry(t.TempDir())
-	if _, err := registry.safePath("../outside.txt"); err == nil {
+	if _, err := registry.safePath(filepath.Join("..", "outside.txt")); err == nil {
 		t.Fatal("expected escape to be rejected")
 	}
 }
@@ -47,7 +47,7 @@ func TestWritePatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "hello world\n" {
+	if strings.ReplaceAll(string(data), "\r\n", "\n") != "hello world\n" {
 		t.Fatalf("content = %q", string(data))
 	}
 }

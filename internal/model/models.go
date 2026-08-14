@@ -184,8 +184,6 @@ func (r *ModelRegistry) Download(ctx context.Context, modelName string) error {
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
 	}
-	defer dst.Close()
-
 	fmt.Printf("Downloading %s...\n", modelName)
 	buf := make([]byte, 256*1024)
 	var writer *progressWriter
@@ -198,7 +196,11 @@ func (r *ModelRegistry) Download(ctx context.Context, modelName string) error {
 		},
 	}
 	if _, err := io.CopyBuffer(writer, resp.Body, buf); err != nil {
+		_ = dst.Close()
 		return fmt.Errorf("save failed: %w", err)
+	}
+	if err := dst.Close(); err != nil {
+		return fmt.Errorf("close downloaded file: %w", err)
 	}
 
 	if err := VerifyGGUF(dest); err != nil {

@@ -542,10 +542,18 @@ func (r *Registry) safePath(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if rel == ".." || strings.HasPrefix(rel, "../") || filepath.IsAbs(path) {
+	if pathEscapesRoot(path) || pathEscapesRoot(rel) {
 		return "", fmt.Errorf("path escapes project root: %s", path)
 	}
 	return full, nil
+}
+
+func pathEscapesRoot(path string) bool {
+	clean := filepath.Clean(path)
+	if filepath.IsAbs(path) || filepath.IsAbs(clean) || clean == ".." {
+		return true
+	}
+	return strings.HasPrefix(clean, ".."+string(filepath.Separator))
 }
 
 func (r *Registry) listFiles(ctx context.Context, raw json.RawMessage) (Result, error) {
@@ -1410,7 +1418,7 @@ func validatePatchPaths(patch string) error {
 			}
 			path := strings.TrimPrefix(fields[1], "a/")
 			path = strings.TrimPrefix(path, "b/")
-			if filepath.IsAbs(path) || path == ".." || strings.HasPrefix(filepath.Clean(path), "../") {
+			if pathEscapesRoot(path) {
 				return fmt.Errorf("patch path escapes project root: %s", fields[1])
 			}
 		}
