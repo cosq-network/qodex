@@ -528,6 +528,22 @@ func TestChatWithToolsToolCall(t *testing.T) {
 	}
 }
 
+func TestChatWithToolsDecodesStringArguments(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"README.md\"}"}}]}}]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-model")
+	res, err := c.ChatWithTools(context.Background(), nil, 0, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(res.ToolCalls[0].Function.Arguments); got != `{"path":"README.md"}` {
+		t.Fatalf("arguments = %s", got)
+	}
+}
+
 func TestChatWithToolsHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)

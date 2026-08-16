@@ -31,6 +31,32 @@ type ToolCallFunction struct {
 	Arguments json.RawMessage `json:"arguments"`
 }
 
+// UnmarshalJSON accepts both forms used by OpenAI-compatible providers for
+// function arguments: an object and a JSON-encoded object string. Keeping the
+// normalized object in RawMessage means every tool executor can unmarshal it
+// directly into its parameter struct.
+func (f *ToolCallFunction) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	f.Name = wire.Name
+	f.Arguments = wire.Arguments
+
+	var encoded string
+	if err := json.Unmarshal(wire.Arguments, &encoded); err == nil {
+		decoded := json.RawMessage(encoded)
+		if !json.Valid(decoded) {
+			return fmt.Errorf("tool arguments string is not valid JSON")
+		}
+		f.Arguments = decoded
+	}
+	return nil
+}
+
 type ToolSchema struct {
 	Type     string       `json:"type"`
 	Function ToolFunction `json:"function"`

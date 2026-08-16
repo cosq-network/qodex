@@ -840,6 +840,9 @@ func parseToolCallDetailed(content string) (toolCall, bool, error) {
 
 	var env toolCallEnvelope
 	if err := json.Unmarshal([]byte(content), &env); err == nil && env.ToolCall.Name != "" {
+		if err := normalizeToolArguments(&env.ToolCall); err != nil {
+			return toolCall{}, false, fmt.Errorf("invalid tool_call arguments: %w", err)
+		}
 		return env.ToolCall, true, nil
 	} else if looksLikeToolCall(content) && err != nil {
 		return toolCall{}, false, fmt.Errorf("invalid tool_call JSON: %w", err)
@@ -849,12 +852,28 @@ func parseToolCallDetailed(content string) (toolCall, bool, error) {
 	end := strings.LastIndex(content, "}")
 	if start >= 0 && end > start {
 		if err := json.Unmarshal([]byte(content[start:end+1]), &env); err == nil && env.ToolCall.Name != "" {
+			if err := normalizeToolArguments(&env.ToolCall); err != nil {
+				return toolCall{}, false, fmt.Errorf("invalid embedded tool_call arguments: %w", err)
+			}
 			return env.ToolCall, true, nil
 		} else if looksLikeToolCall(content[start : end+1]) {
 			return toolCall{}, false, fmt.Errorf("invalid embedded tool_call JSON: %w", err)
 		}
 	}
 	return toolCall{}, false, nil
+}
+
+func normalizeToolArguments(call *toolCall) error {
+	var encoded string
+	if err := json.Unmarshal(call.Arguments, &encoded); err != nil {
+		return nil
+	}
+	decoded := json.RawMessage(encoded)
+	if !json.Valid(decoded) {
+		return fmt.Errorf("arguments string is not valid JSON")
+	}
+	call.Arguments = decoded
+	return nil
 }
 
 func looksLikeToolCall(content string) bool {
