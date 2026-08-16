@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/cosq-network/qodex/compare/v0.2.0...v0.2.1) (2026-08-14)
+
+
+### Bug Fixes
+
+* keep release checkout clean during GPG key export ([403a960](https://github.com/cosq-network/qodex/commit/403a9607f2a285a64501b3cbce946d162c5ab8e7))
+
 ## [0.2.0](https://github.com/cosq-network/qodex/compare/v0.1.0...v0.2.0) (2026-08-14)
 
 
