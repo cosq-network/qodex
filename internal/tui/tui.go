@@ -33,36 +33,44 @@ import (
 var approvalTimeout = 30 * time.Second
 
 type Model struct {
-	agent            *agent.Agent
-	input            textarea.Model
-	viewport         viewport.Model
-	spinner          spinner.Model
-	history          []string
-	busy             bool
-	busyLabel        string
-	currentTool      string
-	startedAt        time.Time
-	lastErr          string
-	width            int
-	height           int
-	workingIndex     int
-	events           chan agent.Event
-	approvals        chan approvalPrompt
-	pending          *approvalPrompt
-	approvalDeadline time.Time
-	approvalExpanded bool
-	streamCh         chan string
-	streamBuffer     strings.Builder
-	lastResponse     string
-	collapseDetails  bool
-	selectedHistory  int
-	searchActive     bool
-	searchQuery      string
-	searchMatches    []int
-	searchIndex      int
-	paletteOpen      bool
-	paletteQuery     string
-	paletteIndex     int
+	agent             *agent.Agent
+	input             textarea.Model
+	viewport          viewport.Model
+	spinner           spinner.Model
+	history           []string
+	busy              bool
+	busyLabel         string
+	currentTool       string
+	startedAt         time.Time
+	lastErr           string
+	width             int
+	height            int
+	workingIndex      int
+	events            chan agent.Event
+	approvals         chan approvalPrompt
+	pending           *approvalPrompt
+	approvalDeadline  time.Time
+	approvalExpanded  bool
+	streamCh          chan string
+	streamBuffer      strings.Builder
+	lastResponse      string
+	collapseDetails   bool
+	selectedHistory   int
+	searchActive      bool
+	searchQuery       string
+	searchMatches     []int
+	searchIndex       int
+	paletteOpen       bool
+	paletteQuery      string
+	paletteIndex      int
+	modelPickerOpen   bool
+	modelPickerName   string
+	modelPickerItems  []string
+	modelPickerIndex  int
+	modelPickerActive string
+	modelCache        map[string][]string
+	modelInfoCache    map[string]map[string]model.HostedModelInfo
+	modelPickerInfo   map[string]model.HostedModelInfo
 
 	projectFiles []string
 	filesLoaded  bool
@@ -101,6 +109,13 @@ type approvalTickMsg time.Time
 
 type filesLoadedMsg []string
 
+type hostedModelsMsg struct {
+	provider string
+	models   []string
+	info     []model.HostedModelInfo
+	err      error
+}
+
 var (
 	headerStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
 	userStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
@@ -130,7 +145,7 @@ type paletteCommand struct {
 
 var paletteCommands = []paletteCommand{
 	{name: "/help", description: "Show command help", shortcut: "?"},
-	{name: "/model", description: "Show active model and backend", shortcut: ""},
+	{name: "/model", description: "View, browse, and select models", shortcut: ""},
 	{name: "/session", description: "Show current session details", shortcut: ""},
 	{name: "/clear", description: "Clear the visible transcript", shortcut: ""},
 	{name: "/export", description: "Export the current session as JSON", shortcut: ""},
@@ -218,6 +233,8 @@ func newModel(a *agent.Agent, messages []store.Message, autoApprove bool) Model 
 		workingIndex:    -1,
 		selectedHistory: -1,
 		paletteIndex:    0,
+		modelCache:      make(map[string][]string),
+		modelInfoCache:  make(map[string]map[string]model.HostedModelInfo),
 		events:          events,
 		approvals:       approvals,
 		streamCh:        streamCh,
@@ -247,6 +264,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.modelPickerOpen {
+			return m.updateModelPicker(msg)
+		}
 		switch msg.String() {
 		case "ctrl+p":
 			m.paletteOpen = !m.paletteOpen
@@ -465,8 +485,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, runSlashMCP(m.agent, strings.TrimPrefix(actionPrompt, "__slash_mcp:"))
 				}
 				if strings.HasPrefix(actionPrompt, "__slash_model:") {
+					modelArgs := strings.Fields(strings.TrimPrefix(actionPrompt, "__slash_model:"))
+					if len(modelArgs) == 1 {
+						if cached := m.modelCache[strings.ToLower(modelArgs[0])]; len(cached) > 0 {
+							m.openModelPicker(strings.ToLower(modelArgs[0]), cached)
+							m.refresh()
+							return m, nil
+						}
+					}
 					m.busy = true
-					m.busyLabel = "Switching model"
+					if len(strings.Fields(strings.TrimPrefix(actionPrompt, "__slash_model:"))) == 1 {
+						m.busyLabel = "Loading models"
+					} else {
+						m.busyLabel = "Switching model"
+					}
 					m.refresh()
 					return m, runSlashModel(m.agent, strings.TrimPrefix(actionPrompt, "__slash_model:"))
 				}
@@ -588,6 +620,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refresh()
 		return m, nil
+
+	case hostedModelsMsg:
+		m.busy = false
+		m.busyLabel = ""
+		if msg.err != nil {
+			m.history = append(m.history, errorStyle.Render("Error: "+msg.err.Error()))
+			m.refresh()
+			return m, nil
+		}
+		if len(msg.models) == 0 {
+			m.history = append(m.history, errorStyle.Render("No models were returned."))
+			m.refresh()
+			return m, nil
+		}
+		m.modelPickerOpen = true
+		m.modelPickerName = msg.provider
+		m.modelPickerItems = append([]string(nil), msg.models...)
+		m.modelPickerIndex = 0
+		m.modelPickerActive = m.agent.Config().Model.Model
+		m.modelCache[msg.provider] = append([]string(nil), msg.models...)
+		m.modelPickerInfo = make(map[string]model.HostedModelInfo, len(msg.info))
+		for _, info := range msg.info {
+			m.modelPickerInfo[info.ID] = info
+		}
+		m.modelInfoCache[msg.provider] = m.modelPickerInfo
+		m.input.Reset()
+		m.input.Placeholder = "Filter models..."
+		m.refresh()
+		return m, nil
 	}
 
 	if m.pending != nil {
@@ -608,6 +669,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	m.updateAutocomplete()
 	return m, cmd
+}
+
+func (m *Model) openModelPicker(provider string, models []string) {
+	m.modelPickerOpen = true
+	m.modelPickerName = provider
+	m.modelPickerItems = append([]string(nil), models...)
+	m.modelPickerIndex = 0
+	m.modelPickerActive = m.agent.Config().Model.Model
+	m.modelPickerInfo = m.modelInfoCache[provider]
+	m.input.Reset()
+	m.input.Placeholder = "Filter models..."
 }
 
 func (m *Model) handleSlashCommand(input string) (handled bool, immediate string, actionPrompt string) {
@@ -776,8 +848,20 @@ func (m *Model) executePaletteCommand() tea.Cmd {
 			return runSlashMCP(m.agent, strings.TrimPrefix(action, "__slash_mcp:"))
 		}
 		if strings.HasPrefix(action, "__slash_model:") {
+			modelArgs := strings.Fields(strings.TrimPrefix(action, "__slash_model:"))
+			if len(modelArgs) == 1 {
+				if cached := m.modelCache[strings.ToLower(modelArgs[0])]; len(cached) > 0 {
+					m.openModelPicker(strings.ToLower(modelArgs[0]), cached)
+					m.refresh()
+					return nil
+				}
+			}
 			m.busy = true
-			m.busyLabel = "Switching model"
+			if len(strings.Fields(strings.TrimPrefix(action, "__slash_model:"))) == 1 {
+				m.busyLabel = "Loading models"
+			} else {
+				m.busyLabel = "Switching model"
+			}
 			return runSlashModel(m.agent, strings.TrimPrefix(action, "__slash_model:"))
 		}
 	}
@@ -799,7 +883,7 @@ func (m Model) localCommandOutput(command string) string {
 		if cfg.Runtime.Backend == string(model.BackendExternal) {
 			provider = cfg.Model.BaseURL
 		}
-		return fmt.Sprintf("Model: %s\nProvider: %s\nBackend: %s\n\nUse /model list, /model local <downloaded-model>, /model groq [model], or /model openrouter [model].", cfg.Model.Model, provider, cfg.Runtime.Backend)
+		return fmt.Sprintf("Model: %s\nProvider: %s\nBackend: %s\nTools: %s\n\nUse /model list to view local models, /model local to browse downloaded models, or /model groq and /model openrouter to browse hosted models. Select a model with ↑/↓ and Enter; type to filter. Hosted lists show FREE, FREE TIER, or pricing badges.", cfg.Model.Model, provider, cfg.Runtime.Backend, cfg.Agent.ToolCalls)
 	case "/session":
 		return fmt.Sprintf("Session: %d\nProject: %s", m.agent.SessionID(), cfg.ProjectRoot)
 	case "/theme":
@@ -859,13 +943,16 @@ func slashHelp() string {
 	return helpStyle.Render(strings.TrimSpace(`Slash commands:
 
 /help              Show this help
-/model             Show active model and backend
-/model list        List downloaded local models and hosted provider commands
+/model             Show active model, provider, backend, and tool mode
+/model list        List downloaded local models and hosted-provider commands
+/model local       Browse and select a downloaded local model
 /model local NAME  Switch to a downloaded local model
-/model groq        Discover Groq models using GROQ_API_KEY
+/model groq        Browse and select Groq models (FREE TIER badges)
 /model groq MODEL  Switch to a Groq model
-/model openrouter  Discover OpenRouter models using OPENROUTER_API_KEY
+/model openrouter  Browse and select OpenRouter models (FREE badges)
 /model openrouter MODEL  Switch to an OpenRouter model
+
+Model picker       ↑/↓ or Ctrl+J/Ctrl+K navigate  •  type to filter  •  Enter select  •  Esc cancel
 /session           Show current session details
 /clear             Clear the visible transcript
 /export            Copy the current session as JSON
@@ -891,7 +978,18 @@ func runSlashModel(a *agent.Agent, args string) tea.Cmd {
 		switch strings.ToLower(fields[0]) {
 		case "local":
 			if len(fields) < 2 {
-				return slashResultMsg{err: fmt.Errorf("usage: /model local <downloaded-model>")}
+				registry := model.NewModelRegistry(config.UserConfigDir())
+				catalog, err := registry.List()
+				if err != nil {
+					return hostedModelsMsg{provider: "local", err: fmt.Errorf("list local models: %w", err)}
+				}
+				models := make([]string, 0, len(catalog))
+				for _, item := range catalog {
+					if item.Downloaded || registry.IsDownloaded(item.Name) {
+						models = append(models, item.Name)
+					}
+				}
+				return hostedModelsMsg{provider: "local", models: models}
 			}
 			name := strings.Join(fields[1:], " ")
 			installRoot := config.UserConfigDir()
@@ -949,16 +1047,89 @@ func discoverHostedModels(provider, baseURL, envName, projectRoot string) tea.Ms
 	} else if strings.TrimSpace(os.Getenv(envName)) == "" {
 		return slashResultMsg{err: fmt.Errorf("%s is not set; export it before discovering %s models", envName, provider)}
 	}
-	models, err := client.ListModels(context.Background())
+	var info []model.HostedModelInfo
+	var err error
+	if strings.Contains(strings.ToLower(baseURL), "openrouter.ai") {
+		info, err = client.ListHostedModelInfo(context.Background(), true)
+	} else {
+		info, err = client.ListHostedModelInfo(context.Background(), false)
+	}
 	if err != nil {
-		return slashResultMsg{err: fmt.Errorf("discover %s models: %w", provider, err)}
+		return hostedModelsMsg{provider: provider, err: fmt.Errorf("discover %s models: %w", provider, err)}
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s models (use /model %s MODEL to switch):\n", provider, provider)
-	for i, name := range models {
-		fmt.Fprintf(&b, "%d. %s\n", i+1, name)
+	models := make([]string, 0, len(info))
+	for _, item := range info {
+		models = append(models, item.ID)
 	}
-	return slashResultMsg{text: b.String()}
+	return hostedModelsMsg{provider: provider, models: models, info: info}
+}
+
+func (m Model) filteredModelPickerItems() []string {
+	query := strings.TrimSpace(m.input.Value())
+	if query == "" {
+		return m.modelPickerItems
+	}
+	filtered := make([]string, 0, len(m.modelPickerItems))
+	for _, item := range m.modelPickerItems {
+		if fuzzyMatch(query, item) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+func (m *Model) updateModelPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	items := m.filteredModelPickerItems()
+	switch msg.String() {
+	case "ctrl+c":
+		m.modelPickerOpen = false
+		m.modelPickerItems = nil
+		m.input.Reset()
+		m.input.Placeholder = composerPlaceholder
+		if m.onQuit != nil {
+			m.onQuit()
+		}
+		return m, tea.Quit
+	case "esc":
+		m.modelPickerOpen = false
+		m.modelPickerItems = nil
+		m.input.Reset()
+		m.input.Placeholder = composerPlaceholder
+		return m, nil
+	case "up", "ctrl+k":
+		if len(items) > 0 {
+			m.modelPickerIndex = (m.modelPickerIndex - 1 + len(items)) % len(items)
+		}
+		return m, nil
+	case "down", "ctrl+j":
+		if len(items) > 0 {
+			m.modelPickerIndex = (m.modelPickerIndex + 1) % len(items)
+		}
+		return m, nil
+	case "enter":
+		if len(items) == 0 {
+			return m, nil
+		}
+		if m.modelPickerIndex >= len(items) {
+			m.modelPickerIndex = 0
+		}
+		selected := items[m.modelPickerIndex]
+		provider := m.modelPickerName
+		m.modelPickerOpen = false
+		m.modelPickerItems = nil
+		m.input.Reset()
+		m.input.Placeholder = composerPlaceholder
+		m.busy = true
+		m.busyLabel = "Switching model"
+		return m, runSlashModel(m.agent, provider+" "+selected)
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	items = m.filteredModelPickerItems()
+	if len(items) == 0 || m.modelPickerIndex >= len(items) {
+		m.modelPickerIndex = 0
+	}
+	return m, cmd
 }
 
 func hostedModelDefaults(provider string) (modelName, baseURL, envName string) {
@@ -979,14 +1150,23 @@ func listModelChoices(a *agent.Agent) string {
 	count := 0
 	for _, item := range models {
 		if item.Downloaded || registry.IsDownloaded(item.Name) {
-			fmt.Fprintf(&b, "- %s\n", item.Name)
+			marker := " "
+			if item.Name == a.Config().Model.Model {
+				marker = "*"
+			}
+			if item.Size != "" {
+				fmt.Fprintf(&b, "%s %s (%s)\n", marker, item.Name, item.Size)
+			} else {
+				fmt.Fprintf(&b, "%s %s\n", marker, item.Name)
+			}
 			count++
 		}
 	}
 	if count == 0 {
 		b.WriteString("- none\n")
 	}
-	b.WriteString("\nHosted providers:\n- /model groq [MODEL] [TOKEN_ENV]\n- /model openrouter [MODEL] [TOKEN_ENV]\n")
+	b.WriteString("\n* active model\n")
+	b.WriteString("\nHosted providers:\n- /model groq      browse and select\n- /model openrouter browse and select\n")
 	b.WriteString(fmt.Sprintf("\nActive: %s (%s)\n", a.Config().Model.Model, a.Config().Runtime.Backend))
 	return b.String()
 }
@@ -1137,6 +1317,51 @@ func (m Model) View() string {
 		}
 		paletteView = paletteStyle.Render(strings.TrimRight(b.String(), "\n"))
 	}
+	pickerView := ""
+	if m.modelPickerOpen {
+		var b strings.Builder
+		items := m.filteredModelPickerItems()
+		b.WriteString(headerStyle.Render(strings.Title(m.modelPickerName) + " models"))
+		b.WriteString("\n")
+		if len(items) == 0 {
+			b.WriteString(helpStyle.Render("No matching models."))
+		} else {
+			visible := items
+			const maxVisible = 12
+			start := 0
+			if len(visible) > maxVisible {
+				start = m.modelPickerIndex - maxVisible/2
+				if start < 0 {
+					start = 0
+				}
+				if start+maxVisible > len(visible) {
+					start = len(visible) - maxVisible
+				}
+				visible = visible[start : start+maxVisible]
+			}
+			for i, item := range visible {
+				index := start + i
+				label := item
+				if info, ok := m.modelPickerInfo[item]; ok {
+					label += "  [" + modelCostBadge(info) + "]"
+				}
+				if item == m.modelPickerActive {
+					label += "  (active)"
+				}
+				line := "  " + label
+				if index == m.modelPickerIndex {
+					line = autoSelStyle.Render("▸ " + label)
+				} else {
+					line = autoStyle.Render(line)
+				}
+				b.WriteString(line)
+				b.WriteString("\n")
+			}
+		}
+		b.WriteString("\n")
+		b.WriteString(helpStyle.Render("↑/↓ navigate  Enter select  type to filter  Esc cancel"))
+		pickerView = paletteStyle.Render(strings.TrimRight(b.String(), "\n"))
+	}
 
 	inputWidth := max(20, m.width-2)
 	if m.width == 0 {
@@ -1149,9 +1374,23 @@ func (m Model) View() string {
 		progress,
 		autoView,
 		paletteView,
+		pickerView,
 		status,
 		inputView,
 	)
+}
+
+func modelCostBadge(info model.HostedModelInfo) string {
+	if info.Free {
+		return "FREE"
+	}
+	if info.FreeTierEligible {
+		return "FREE TIER"
+	}
+	if info.HasPricing {
+		return fmt.Sprintf("$%.3f/$%.3f per 1M", info.PromptPrice, info.CompletionPrice)
+	}
+	return "pricing unavailable"
 }
 
 func (m Model) progressView() string {

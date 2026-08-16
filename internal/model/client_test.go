@@ -109,6 +109,58 @@ func TestClientListsModelsWithAuthentication(t *testing.T) {
 	}
 }
 
+func TestClientListsToolCapableModelsWithOpenRouterFilter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" || r.URL.Query().Get("supported_parameters") != "tools" {
+			t.Fatalf("request = %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"openai/gpt-oss-20b"}]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL+"/v1", "")
+	c.SetAuthToken("test-token")
+	c.SetAuth("bearer", "TEST_OPENROUTER_KEY", "")
+	models, err := c.ListToolCapableModels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 1 || models[0] != "openai/gpt-oss-20b" {
+		t.Fatalf("models = %#v", models)
+	}
+}
+
+func TestOpenRouterRequestsIncludeAttributionHeaders(t *testing.T) {
+	c := NewClient("https://openrouter.ai/api/v1", "test-model")
+	c.SetAuth("bearer", "TEST_OPENROUTER_KEY", "")
+	req, err := http.NewRequest(http.MethodGet, c.BaseURL+"/models", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.applyAuth(req)
+	if req.Header.Get("HTTP-Referer") != "https://github.com/cosq-network/qodex" || req.Header.Get("X-OpenRouter-Title") != "Qodex" {
+		t.Fatalf("missing OpenRouter attribution headers: %#v", req.Header)
+	}
+}
+
+func TestHostedModelInfoClassifiesZeroPricedModels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[
+			{"id":"free/model","name":"Free","pricing":{"prompt":"0","completion":"0","request":"0","image":"0","web_search":"0","internal_reasoning":"0"}},
+			{"id":"paid/model","name":"Paid","pricing":{"prompt":"0.000001","completion":"0.000002","request":"0","image":"0","web_search":"0","internal_reasoning":"0"}}
+		]}`))
+	}))
+	defer srv.Close()
+
+	models, err := NewClient(srv.URL, "").ListHostedModelInfo(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 || !models[0].Free || models[1].Free {
+		t.Fatalf("free classification = %#v", models)
+	}
+}
+
 func TestCheckFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

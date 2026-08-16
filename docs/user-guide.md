@@ -368,7 +368,7 @@ Run the failing tests and fix the issue.
 
 The interactive TUI supports `/help`, `/model`, `/session`, `/clear`, `/export`, `/theme`, `/settings`, `/jump [CATEGORY]`, `/skills [FILTER]`, `/plan`, `/compact`, `/mcp [NAME]`, `/commit [MESSAGE]`, and `/undo [COMMIT]`. Git commands are translated into normal agent requests, so configured approval and audit policies still apply. `/skill <name>` remains available for explicit skill routing.
 
-Model selection is available without leaving the TUI. Use `/model list` to see downloaded local models and the hosted-provider commands, `/model local NAME` to switch to a downloaded GGUF, or `/model groq` / `/model openrouter` to discover models from the provider using the configured API key. Then use `/model groq MODEL` or `/model openrouter MODEL` to switch. Hosted commands persist only the endpoint, model, and environment-variable name; credentials are loaded from the OS credential store when setup stored one, with the environment variable as a fallback.
+Model selection is available without leaving the TUI. Use `/model list` to see downloaded local models, `/model local` to open a local-model picker, or `/model groq` / `/model openrouter` to discover and select hosted models using the configured credential. You can still switch directly with `/model local NAME`, `/model groq MODEL`, or `/model openrouter MODEL`. Pickers support arrow keys or `Ctrl+J`/`Ctrl+K`, type-to-filter, Enter to select, and Esc to cancel. The active model is marked in the picker. Hosted entries show `FREE`, `FREE TIER`, or input/output pricing badges: OpenRouter `FREE` is based on zero advertised pricing, while Groq `FREE TIER` indicates access under the provider’s free-plan limits, not unlimited free inference. Hosted commands persist only the endpoint, model, and environment-variable name; credentials are loaded from the OS credential store when setup stored one, with the environment variable as a fallback.
 
 `/jump` accepts `user`, `tool`, `approval`, or `error`. `/export` copies formatted JSON to the clipboard. The command palette is available with `Ctrl+P`; transcript search uses `Ctrl+F`, `Ctrl+N` moves to the next match, `Ctrl+Y` copies selected output, and `Ctrl+O` collapses verbose tool details. `Ctrl+J` inserts a newline and `Esc` cancels the current interaction.
 
@@ -444,6 +444,8 @@ All backends are managed through `qodex serve start|stop|status`. See [llama.cpp
 ### Hosted Providers and BYOK
 
 During setup, choose the hosted-provider option to configure Groq or OpenRouter. You may provide an existing environment-variable name or paste the key into the hidden setup prompt. Qodex stores the provider URL, model ID, and environment-variable name in its config, and stores the secret in the operating system credential store when supported; it never writes the API key to TOML.
+
+When credentials are available, setup lists selectable hosted models with cost badges. OpenRouter models are filtered to models that support native tools and are marked `FREE` only when all advertised pricing dimensions are zero. Groq models are marked `FREE TIER` because Groq’s free access is governed by plan quotas and rate limits; model pricing may still apply outside those limits.
 
 ```sh
 export GROQ_API_KEY="..."

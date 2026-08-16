@@ -281,32 +281,40 @@ func looksLikeHostedAPIKey(value string) bool {
 
 func selectHostedModel(reader *bufio.Reader, out io.Writer, baseURL, authType, tokenEnv, apiKey, fallback string) string {
 	if apiKey == "" && strings.TrimSpace(os.Getenv(tokenEnv)) == "" {
-		_, _ = fmt.Fprintf(out, "%s is not set; using the default model %s. Set the key and use /model %s list to discover models later.\n", tokenEnv, fallback, hostedProviderName(baseURL))
+		_, _ = fmt.Fprintf(out, "%s is not set; using provisional model %s. Set the key and use /model %s list to validate and discover models later.\n", tokenEnv, fallback, hostedProviderName(baseURL))
 		return fallback
 	}
 	client := model.NewClient(baseURL, fallback)
 	client.SetAuth(authType, tokenEnv, "")
 	client.SetAuthToken(apiKey)
-	models, err := client.ListModels(context.Background())
+	info, err := client.ListHostedModelInfo(context.Background(), strings.Contains(strings.ToLower(baseURL), "openrouter.ai"))
 	if err != nil {
 		_, _ = fmt.Fprintf(out, "Could not discover provider models (%v); using %s.\n", err, fallback)
 		return fallback
 	}
-	return chooseHostedModel(reader, out, models, fallback)
+	return chooseHostedModel(reader, out, info, fallback)
 }
 
-func chooseHostedModel(reader *bufio.Reader, out io.Writer, models []string, fallback string) string {
+func chooseHostedModel(reader *bufio.Reader, out io.Writer, models []model.HostedModelInfo, fallback string) string {
 	_, _ = fmt.Fprintln(out, "Available hosted models:")
-	for i, name := range models {
-		_, _ = fmt.Fprintf(out, "  %d. %s\n", i+1, name)
+	for i, item := range models {
+		_, _ = fmt.Fprintf(out, "  %d. %s [%s]\n", i+1, item.ID, hostedModelBadge(item))
 	}
 	_, _ = fmt.Fprintf(out, "Choose model [1] or enter a model ID (%s): ", fallback)
 	choice := readInput(reader, "1")
 	if index, err := strconv.Atoi(choice); err == nil && index >= 1 && index <= len(models) {
-		return models[index-1]
+		return models[index-1].ID
 	}
 	if strings.TrimSpace(choice) != "" {
 		return strings.TrimSpace(choice)
+	}
+	for _, item := range models {
+		if item.ID == fallback {
+			return fallback
+		}
+	}
+	if len(models) > 0 {
+		return models[0].ID
 	}
 	return fallback
 }
@@ -316,6 +324,19 @@ func hostedProviderName(baseURL string) string {
 		return "openrouter"
 	}
 	return "groq"
+}
+
+func hostedModelBadge(info model.HostedModelInfo) string {
+	if info.Free {
+		return "FREE"
+	}
+	if info.FreeTierEligible {
+		return "FREE TIER"
+	}
+	if info.HasPricing {
+		return fmt.Sprintf("$%.3f/$%.3f per 1M", info.PromptPrice, info.CompletionPrice)
+	}
+	return "pricing unavailable"
 }
 
 func validEnvironmentVariableName(name string) bool {

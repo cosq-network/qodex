@@ -175,6 +175,29 @@ func TestRunSlashModelHostedProvider(t *testing.T) {
 	}
 }
 
+func TestModelPickerFiltersAndCancels(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Defaults(root)
+	a := agent.New(agent.Options{Config: cfg, Client: model.NewClient(cfg.Model.BaseURL, cfg.Model.Model)})
+	m := New(a)
+	m.busy = true
+	updated, _ := m.Update(hostedModelsMsg{provider: "openrouter", models: []string{"openai/gpt-oss-20b", "google/gemini-flash"}})
+	m = updated.(Model)
+	if !m.modelPickerOpen || m.busy {
+		t.Fatalf("picker state = open:%v busy:%v", m.modelPickerOpen, m.busy)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g', 'e', 'm'}})
+	m = *updated.(*Model)
+	if got := m.filteredModelPickerItems(); len(got) != 1 || got[0] != "google/gemini-flash" {
+		t.Fatalf("filtered models = %#v", got)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = *updated.(*Model)
+	if m.modelPickerOpen {
+		t.Fatal("expected picker to close on escape")
+	}
+}
+
 func TestResumeRendersHistory(t *testing.T) {
 	now := time.Now()
 	messages := []store.Message{
@@ -379,7 +402,7 @@ func TestCommandPaletteShowsDescriptions(t *testing.T) {
 	model := New(agent.New(agent.Options{}))
 	model.paletteOpen = true
 	view := model.View()
-	if !strings.Contains(view, "Command palette") || !strings.Contains(view, "Show active model and backend") {
+	if !strings.Contains(view, "Command palette") || !strings.Contains(view, "View, browse, and select models") {
 		t.Fatalf("expected command palette descriptions: %q", view)
 	}
 }

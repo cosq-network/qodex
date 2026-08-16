@@ -78,6 +78,8 @@ Bubble Tea model
   -> approval prompts
   -> resume history rendering
   -> @file autocomplete
+
+Model selection is handled as an asynchronous TUI flow. `/model local`, `/model groq`, and `/model openrouter` load a catalog, open a keyboard-driven picker, and keep the existing explicit model-ID forms for scripting. The picker filters locally, marks the active model, and displays hosted pricing metadata. OpenRouter discovery requests models supporting `tools`; OpenRouter zero-priced entries are marked `FREE`, while Groq entries are marked `FREE TIER` to represent provider free-plan eligibility rather than zero model pricing.
 ```
 
 ## Agent Loop

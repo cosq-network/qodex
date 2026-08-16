@@ -26,6 +26,7 @@ const (
 
 type setupHostedModelsMsg struct {
 	models []string
+	info   []model.HostedModelInfo
 	err    error
 }
 
@@ -39,6 +40,7 @@ type setupWizardModel struct {
 	modelChoice  int
 	catalog      []model.ModelInfo
 	hosted       []string
+	hostedInfo   []model.HostedModelInfo
 	provider     string
 	baseURL      string
 	defaultHost  string
@@ -130,6 +132,7 @@ func (m setupWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case setupHostedModelsMsg:
 		m.hosted = msg.models
+		m.hostedInfo = msg.info
 		if msg.err != nil {
 			m.notice = fmt.Sprintf("Model discovery failed: %v. The default model is available.", msg.err)
 			m.hosted = []string{m.defaultHost}
@@ -173,8 +176,12 @@ func discoverSetupHostedModels(baseURL, tokenEnv, apiKey string) tea.Cmd {
 		client := model.NewClient(baseURL, "")
 		client.SetAuth("bearer", tokenEnv, "")
 		client.SetAuthToken(apiKey)
-		models, err := client.ListModels(context.Background())
-		return setupHostedModelsMsg{models: models, err: err}
+		info, err := client.ListHostedModelInfo(context.Background(), strings.Contains(strings.ToLower(baseURL), "openrouter.ai"))
+		models := make([]string, 0, len(info))
+		for _, item := range info {
+			models = append(models, item.ID)
+		}
+		return setupHostedModelsMsg{models: models, info: info, err: err}
 	}
 }
 
@@ -311,7 +318,11 @@ func (m setupWizardModel) View() string {
 		}
 		for i, name := range m.hosted {
 			b.WriteString(setupWizardCursor(i == m.modelChoice))
-			b.WriteString(name)
+			label := name
+			if i < len(m.hostedInfo) && m.hostedInfo[i].ID == name {
+				label += "  [" + hostedModelBadge(m.hostedInfo[i]) + "]"
+			}
+			b.WriteString(label)
 			b.WriteByte('\n')
 		}
 		b.WriteString("\n↑/↓ select  Enter continue  Esc back")

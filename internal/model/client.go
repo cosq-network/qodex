@@ -91,6 +91,22 @@ type ResponseMessage struct {
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 }
 
+type HostedModelInfo struct {
+	ID               string
+	Name             string
+	ContextLength    int
+	PromptPrice      float64 // USD per million tokens; zero when unavailable.
+	CompletionPrice  float64 // USD per million tokens; zero when unavailable.
+	RequestPrice     float64
+	ImagePrice       float64
+	WebSearchPrice   float64
+	ReasoningPrice   float64
+	HasPricing       bool
+	Free             bool // Exact zero pricing, meaningful for OpenRouter.
+	FreeTierEligible bool // Provider offers a free plan/quota for this model.
+	ToolCapable      bool
+}
+
 type Client struct {
 	BaseURL    string
 	Model      string
@@ -144,7 +160,45 @@ func responseErrorFromBody(status int, header http.Header, body string) error {
 // Providers may return additional metadata, but Qodex only needs the stable
 // ID used in chat completion requests.
 func (c *Client) ListModels(ctx context.Context) ([]string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/models", nil)
+	models, err := c.ListHostedModelInfo(ctx, false)
+	return hostedModelIDs(models), err
+}
+
+// ListToolCapableModels returns models advertised as supporting the
+// OpenAI-compatible tools parameter. OpenRouter exposes this filter.
+func (c *Client) ListToolCapableModels(ctx context.Context) ([]string, error) {
+	models, err := c.ListHostedModelInfo(ctx, true)
+	return hostedModelIDs(models), err
+}
+
+func hostedModelIDs(models []HostedModelInfo) []string {
+	ids := make([]string, 0, len(models))
+	for _, item := range models {
+		ids = append(ids, item.ID)
+	}
+	return ids
+}
+
+// ListHostedModelInfo returns metadata used by hosted-provider selectors.
+func (c *Client) ListHostedModelInfo(ctx context.Context, toolsOnly bool) ([]HostedModelInfo, error) {
+	query := ""
+	if toolsOnly {
+		query = "?supported_parameters=tools"
+	}
+	models, err := c.listModels(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	if strings.Contains(strings.ToLower(c.BaseURL), "groq.com") {
+		for i := range models {
+			models[i].FreeTierEligible = true
+		}
+	}
+	return models, nil
+}
+
+func (c *Client) listModels(ctx context.Context, query string) ([]HostedModelInfo, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/models"+query, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -159,13 +213,24 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 	}
 	var payload struct {
 		Data []struct {
-			ID string `json:"id"`
+			ID            string   `json:"id"`
+			Name          string   `json:"name"`
+			ContextLength int      `json:"context_length"`
+			Supported     []string `json:"supported_parameters"`
+			Pricing       struct {
+				Prompt            string `json:"prompt"`
+				Completion        string `json:"completion"`
+				Request           string `json:"request"`
+				Image             string `json:"image"`
+				WebSearch         string `json:"web_search"`
+				InternalReasoning string `json:"internal_reasoning"`
+			} `json:"pricing"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&payload); err != nil {
 		return nil, fmt.Errorf("decode model list: %w", err)
 	}
-	models := make([]string, 0, len(payload.Data))
+	models := make([]HostedModelInfo, 0, len(payload.Data))
 	seen := make(map[string]struct{}, len(payload.Data))
 	for _, item := range payload.Data {
 		id := strings.TrimSpace(item.ID)
@@ -176,12 +241,56 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 			continue
 		}
 		seen[id] = struct{}{}
-		models = append(models, id)
+		prices := []string{item.Pricing.Prompt, item.Pricing.Completion, item.Pricing.Request, item.Pricing.Image, item.Pricing.WebSearch, item.Pricing.InternalReasoning}
+		parsed := make([]float64, len(prices))
+		hasPricing := true
+		for i, value := range prices {
+			if value == "" {
+				if i < 2 {
+					hasPricing = false
+				}
+				continue
+			}
+			var err error
+			parsed[i], err = strconv.ParseFloat(value, 64)
+			if err != nil {
+				hasPricing = false
+			}
+		}
+		info := HostedModelInfo{
+			ID:              id,
+			Name:            strings.TrimSpace(item.Name),
+			ContextLength:   item.ContextLength,
+			PromptPrice:     parsed[0] * 1e6,
+			CompletionPrice: parsed[1] * 1e6,
+			RequestPrice:    parsed[2] * 1e6,
+			ImagePrice:      parsed[3] * 1e6,
+			WebSearchPrice:  parsed[4] * 1e6,
+			ReasoningPrice:  parsed[5] * 1e6,
+			HasPricing:      hasPricing,
+		}
+		for _, supported := range item.Supported {
+			if supported == "tools" {
+				info.ToolCapable = true
+				break
+			}
+		}
+		info.Free = hasPricing && allZero(parsed)
+		models = append(models, info)
 	}
 	if len(models) == 0 {
 		return nil, fmt.Errorf("provider returned no usable models")
 	}
 	return models, nil
+}
+
+func allZero(values []float64) bool {
+	for _, value := range values {
+		if value != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func NewClient(baseURL, model string) *Client {
@@ -213,6 +322,10 @@ func (c *Client) SetAuthToken(token string) {
 }
 
 func (c *Client) applyAuth(req *http.Request) {
+	if strings.Contains(strings.ToLower(c.BaseURL), "openrouter.ai") {
+		req.Header.Set("HTTP-Referer", "https://github.com/cosq-network/qodex")
+		req.Header.Set("X-OpenRouter-Title", "Qodex")
+	}
 	if c.AuthType == "" || c.AuthType == "none" || c.TokenEnv == "" {
 		return
 	}
