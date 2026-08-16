@@ -23,6 +23,7 @@ import (
 
 	"github.com/benoybose/qodex/internal/agent"
 	"github.com/benoybose/qodex/internal/config"
+	"github.com/benoybose/qodex/internal/credentials"
 	"github.com/benoybose/qodex/internal/mcp"
 	"github.com/benoybose/qodex/internal/model"
 	"github.com/benoybose/qodex/internal/skills"
@@ -922,7 +923,7 @@ func runSlashModel(a *agent.Agent, args string) tea.Cmd {
 			provider := strings.ToLower(fields[0])
 			modelName, baseURL, envName := hostedModelDefaults(provider)
 			if len(fields) < 2 || strings.EqualFold(fields[1], "list") {
-				return discoverHostedModels(provider, baseURL, envName)
+				return discoverHostedModels(provider, baseURL, envName, a.Config().ProjectRoot)
 			}
 			if len(fields) >= 2 {
 				modelName = fields[1]
@@ -940,12 +941,14 @@ func runSlashModel(a *agent.Agent, args string) tea.Cmd {
 	}
 }
 
-func discoverHostedModels(provider, baseURL, envName string) tea.Msg {
-	if strings.TrimSpace(os.Getenv(envName)) == "" {
-		return slashResultMsg{err: fmt.Errorf("%s is not set; export it before discovering %s models", envName, provider)}
-	}
+func discoverHostedModels(provider, baseURL, envName, projectRoot string) tea.Msg {
 	client := model.NewClient(baseURL, "")
 	client.SetAuth("bearer", envName, "")
+	if token, err := credentials.Load(projectRoot, envName); err == nil && strings.TrimSpace(token) != "" {
+		client.SetAuthToken(token)
+	} else if strings.TrimSpace(os.Getenv(envName)) == "" {
+		return slashResultMsg{err: fmt.Errorf("%s is not set; export it before discovering %s models", envName, provider)}
+	}
 	models, err := client.ListModels(context.Background())
 	if err != nil {
 		return slashResultMsg{err: fmt.Errorf("discover %s models: %w", provider, err)}

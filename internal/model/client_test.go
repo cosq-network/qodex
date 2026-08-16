@@ -544,6 +544,34 @@ func TestChatWithToolsDecodesStringArguments(t *testing.T) {
 	}
 }
 
+func TestToolCallFunctionMarshalsArgumentsAsJSONString(t *testing.T) {
+	data, err := json.Marshal(ToolCallFunction{
+		Name:      "read_file",
+		Arguments: json.RawMessage(`{"path":"README.md"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(data); got != `{"name":"read_file","arguments":"{\"path\":\"README.md\"}"}` {
+		t.Fatalf("wire tool function = %s", got)
+	}
+}
+
+func TestHTTPErrorParsesRetryAfter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "7")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte("rate limited"))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-model")
+	err := c.Check(context.Background())
+	if err == nil || RetryAfter(err) != 7*time.Second {
+		t.Fatalf("error=%v retry_after=%s", err, RetryAfter(err))
+	}
+}
+
 func TestChatWithToolsHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)

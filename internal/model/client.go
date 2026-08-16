@@ -5,10 +5,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -29,6 +31,22 @@ type ToolCall struct {
 type ToolCallFunction struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
+}
+
+// MarshalJSON emits the OpenAI/Groq wire format. Arguments are kept decoded
+// in memory for local execution, but the API expects them as a JSON string.
+func (f ToolCallFunction) MarshalJSON() ([]byte, error) {
+	args := strings.TrimSpace(string(f.Arguments))
+	if args == "" {
+		args = "{}"
+	}
+	if !json.Valid([]byte(args)) {
+		return nil, fmt.Errorf("tool arguments are not valid JSON")
+	}
+	return json.Marshal(struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	}{Name: f.Name, Arguments: args})
 }
 
 // UnmarshalJSON accepts both forms used by OpenAI-compatible providers for
@@ -84,6 +102,44 @@ type Client struct {
 	authToken  string // ephemeral token supplied by setup; never persisted
 }
 
+type HTTPError struct {
+	StatusCode int
+	Body       string
+	RetryAfter time.Duration
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("status %d: %s", e.StatusCode, e.Body)
+}
+
+func RetryAfter(err error) time.Duration {
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.RetryAfter
+	}
+	return 0
+}
+
+func responseError(resp *http.Response) error {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	return responseErrorFromBody(resp.StatusCode, resp.Header, string(body))
+}
+
+func responseErrorFromBody(status int, header http.Header, body string) error {
+	var retryAfter time.Duration
+	if value := strings.TrimSpace(header.Get("Retry-After")); value != "" {
+		if seconds, err := strconv.Atoi(value); err == nil && seconds >= 0 {
+			retryAfter = time.Duration(seconds) * time.Second
+		} else if when, err := http.ParseTime(value); err == nil {
+			retryAfter = time.Until(when)
+			if retryAfter < 0 {
+				retryAfter = 0
+			}
+		}
+	}
+	return &HTTPError{StatusCode: status, Body: body, RetryAfter: retryAfter}
+}
+
 // ListModels returns model IDs exposed by an OpenAI-compatible endpoint.
 // Providers may return additional metadata, but Qodex only needs the stable
 // ID used in chat completion requests.
@@ -99,8 +155,7 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+		return nil, responseError(resp)
 	}
 	var payload struct {
 		Data []struct {
@@ -192,8 +247,7 @@ func (c *Client) Check(ctx context.Context) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+		return responseError(resp)
 	}
 	return nil
 }
@@ -223,9 +277,7 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, temperature
 		return nil, err
 	}
 	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		_ = resp.Body.Close()
-		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+		return nil, responseError(resp)
 	}
 
 	ch := make(chan StreamResult, 10)
@@ -381,7 +433,7 @@ func (c *Client) chatWithTools(ctx context.Context, messages []Message, temperat
 		return nil, err
 	}
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+		return nil, responseErrorFromBody(resp.StatusCode, resp.Header, string(body))
 	}
 
 	var out chatResponse

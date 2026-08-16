@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"sort"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/benoybose/qodex/internal/config"
+	"github.com/benoybose/qodex/internal/credentials"
 	"github.com/benoybose/qodex/internal/model"
 	"github.com/benoybose/qodex/internal/skills"
 	"github.com/benoybose/qodex/internal/store"
@@ -223,7 +225,8 @@ func (a *Agent) ConfigureModel(ctx context.Context, modelCfg config.ModelConfig,
 	a.cfg.Model = modelCfg
 	a.cfg.Runtime.Backend = backend
 	toolCalls := "prompt"
-	if backend == string(model.BackendExternal) {
+	baseURL := strings.ToLower(modelCfg.BaseURL)
+	if backend == string(model.BackendExternal) && (strings.Contains(baseURL, "api.groq.com") || strings.Contains(baseURL, "openrouter.ai")) {
 		toolCalls = "native"
 	}
 	if err := config.SetProjectValue(a.cfg.ProjectRoot, "agent.tool_calls", toolCalls); err != nil {
@@ -232,7 +235,13 @@ func (a *Agent) ConfigureModel(ctx context.Context, modelCfg config.ModelConfig,
 	a.cfg.Agent.ToolCalls = toolCalls
 	a.client.BaseURL = strings.TrimRight(modelCfg.BaseURL, "/")
 	a.client.Model = modelCfg.Model
+	a.client.SetAuthToken("")
 	a.client.SetAuth(modelCfg.Auth.Type, modelCfg.Auth.TokenEnv, modelCfg.Auth.Header)
+	if modelCfg.Auth.TokenEnv != "" && modelCfg.Auth.Type != "" && modelCfg.Auth.Type != "none" {
+		if token, err := credentials.Load(a.cfg.ProjectRoot, modelCfg.Auth.TokenEnv); err == nil && strings.TrimSpace(token) != "" {
+			a.client.SetAuthToken(token)
+		}
+	}
 	return nil
 }
 
@@ -638,7 +647,7 @@ func (a *Agent) chat(ctx context.Context) (string, error) {
 			if err == nil || !retryableModelError(ctx, err) || attempt == 2 {
 				return result, err
 			}
-			if err := waitModelRetry(ctx, attempt); err != nil {
+			if err := waitModelRetry(ctx, attempt, err); err != nil {
 				return "", err
 			}
 		}
@@ -650,7 +659,7 @@ func (a *Agent) chat(ctx context.Context) (string, error) {
 			if !retryableModelError(ctx, err) || attempt == 2 {
 				return "", err
 			}
-			if err := waitModelRetry(ctx, attempt); err != nil {
+			if err := waitModelRetry(ctx, attempt, err); err != nil {
 				return "", err
 			}
 			continue
@@ -687,7 +696,7 @@ func (a *Agent) chatWithTools(ctx context.Context, tools []model.ToolSchema) (*m
 		if err == nil || !retryableModelError(ctx, err) || attempt == 2 {
 			return result, err
 		}
-		if err := waitModelRetry(ctx, attempt); err != nil {
+		if err := waitModelRetry(ctx, attempt, err); err != nil {
 			return nil, err
 		}
 	}
@@ -707,8 +716,20 @@ func retryableModelError(ctx context.Context, err error) bool {
 	return false
 }
 
-func waitModelRetry(ctx context.Context, attempt int) error {
-	delay := time.Duration(1<<attempt) * 250 * time.Millisecond
+func waitModelRetry(ctx context.Context, attempt int, modelErr error) error {
+	delay := time.Duration(1<<attempt) * 500 * time.Millisecond
+	if retryAfter := model.RetryAfter(modelErr); retryAfter > 0 {
+		if retryAfter > delay {
+			delay = retryAfter
+		}
+	} else if delay > 0 {
+		// Jitter prevents multiple clients recovering from a shared rate limit
+		// at the same instant.
+		delay = delay/2 + time.Duration(rand.Int64N(int64(delay/2)+1))
+	}
+	if delay > 30*time.Second {
+		delay = 30 * time.Second
+	}
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
