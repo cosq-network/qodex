@@ -164,7 +164,7 @@ Goal: evolve skills from simple Markdown context into routable, budgeted, policy
 | completed | Starter project skill | Skills | `qodex init` creates `.qodex/skills/project/SKILL.md`. |
 | completed | Skill selection | Skills/Agent | Keyword-based matching from headings and body content, project skill always included, `/skill <name>` explicit invocation. |
 | completed | `skill.toml` metadata | Skills | Add triggers, allowed tools, context budgets, and predefined scripts. |
-| completed | Model-assisted skill routing | Skills/Agent | Let the model choose from compact skill summaries via SelectViaModel, with heuristic fallback. Controlled by agent.skill_routing config (auto/model). |
+| completed | Deterministic skill routing | Skills/Agent | Select up to three local skills from prompt keywords, metadata, content, and explicit `/skill` requests without a provider routing call. |
 | completed | Skill context slicing | Skills/Agent | Include only relevant sections for large skills via RenderSliced, which splits on ##/### headings, scores each section against the prompt, and includes top-scoring sections within budget. |
 | completed | Skill script policy | Skills/Safety | run_script tool executes pre-approved skill scripts without re-prompting; metadata tracks provenance (skill name + script description). |
 

@@ -15,25 +15,30 @@ type Store struct {
 }
 
 type Session struct {
-	ID        int64
-	Title     string
-	UpdatedAt time.Time
+	ID               int64
+	Title            string
+	UpdatedAt        time.Time
+	SkillsJSON       string
+	AllowedToolsJSON string
+	ToolMode         string
 }
 
 type Message struct {
 	Role      string
 	Content   string
+	Metadata  string
 	CreatedAt time.Time
 }
 
 type ToolCallRecord struct {
-	ID        int64
-	SessionID int64
-	Name      string
-	Arguments string
-	Status    string
-	CreatedAt time.Time
-	Result    *ToolResultRecord
+	ID          int64
+	SessionID   int64
+	Name        string
+	Arguments   string
+	Status      string
+	ContextJSON string
+	CreatedAt   time.Time
+	Result      *ToolResultRecord
 }
 
 type ToolResultRecord struct {
@@ -136,10 +141,14 @@ func (s *Store) GetArtifact(ctx context.Context, id int64) (*OutputArtifact, err
 	return &a, nil
 }
 
-func (s *Store) AddMessage(ctx context.Context, sessionID int64, role, content string) error {
+func (s *Store) AddMessage(ctx context.Context, sessionID int64, role, content string, metadata ...string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := s.db.ExecContext(ctx, `insert into messages(session_id,role,content,created_at) values(?,?,?,?)`,
-		sessionID, role, content, now)
+	meta := ""
+	if len(metadata) > 0 {
+		meta = metadata[0]
+	}
+	_, err := s.db.ExecContext(ctx, `insert into messages(session_id,role,content,metadata_json,created_at) values(?,?,?,?,?)`,
+		sessionID, role, content, meta, now)
 	if err != nil {
 		return err
 	}
@@ -147,10 +156,19 @@ func (s *Store) AddMessage(ctx context.Context, sessionID int64, role, content s
 	return err
 }
 
-func (s *Store) AddToolCall(ctx context.Context, sessionID int64, name, args, status string) (int64, error) {
+func (s *Store) UpdateSessionContext(ctx context.Context, sessionID int64, skillsJSON, allowedToolsJSON, toolMode string) error {
+	_, err := s.db.ExecContext(ctx, `update sessions set skills_json=?, allowed_tools_json=?, tool_mode=? where id=?`, skillsJSON, allowedToolsJSON, toolMode, sessionID)
+	return err
+}
+
+func (s *Store) AddToolCall(ctx context.Context, sessionID int64, name, args, status string, contextJSON ...string) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	res, err := s.db.ExecContext(ctx, `insert into tool_calls(session_id,name,arguments_json,status,created_at) values(?,?,?,?,?)`,
-		sessionID, name, args, status, now)
+	contextValue := ""
+	if len(contextJSON) > 0 {
+		contextValue = contextJSON[0]
+	}
+	res, err := s.db.ExecContext(ctx, `insert into tool_calls(session_id,name,arguments_json,status,context_json,created_at) values(?,?,?,?,?,?)`,
+		sessionID, name, args, status, contextValue, now)
 	if err != nil {
 		return 0, err
 	}
@@ -187,21 +205,22 @@ func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 }
 
 func (s *Store) GetSession(ctx context.Context, id int64) (Session, error) {
-	row := s.db.QueryRowContext(ctx, `select id,title,updated_at from sessions where id=?`, id)
+	row := s.db.QueryRowContext(ctx, `select id,title,updated_at,skills_json,allowed_tools_json,tool_mode from sessions where id=?`, id)
 	var sessionID int64
 	var title, updated string
-	if err := row.Scan(&sessionID, &title, &updated); err != nil {
+	var skillsJSON, allowedToolsJSON, toolMode string
+	if err := row.Scan(&sessionID, &title, &updated, &skillsJSON, &allowedToolsJSON, &toolMode); err != nil {
 		return Session{}, err
 	}
 	t, parseErr := time.Parse(time.RFC3339, updated)
 	if parseErr != nil {
 		fmt.Fprintf(os.Stderr, "[qodex] failed to parse session updated_at: %v\n", parseErr)
 	}
-	return Session{ID: sessionID, Title: title, UpdatedAt: t}, nil
+	return Session{ID: sessionID, Title: title, UpdatedAt: t, SkillsJSON: skillsJSON, AllowedToolsJSON: allowedToolsJSON, ToolMode: toolMode}, nil
 }
 
 func (s *Store) ListToolCalls(ctx context.Context, sessionID int64) ([]ToolCallRecord, error) {
-	query := `select tc.id,tc.session_id,tc.name,tc.arguments_json,tc.status,tc.created_at,
+	query := `select tc.id,tc.session_id,tc.name,tc.arguments_json,tc.status,tc.context_json,tc.created_at,
 		tr.id,tr.tool_call_id,tr.output,tr.error,tr.created_at
 		from tool_calls tc
 		left join tool_results tr on tr.tool_call_id = tc.id
@@ -218,7 +237,7 @@ func (s *Store) ListToolCalls(ctx context.Context, sessionID int64) ([]ToolCallR
 		var created string
 		var resultID, resultToolCallID sql.NullInt64
 		var resultOutput, resultError, resultCreated sql.NullString
-		if err := rows.Scan(&r.ID, &r.SessionID, &r.Name, &r.Arguments, &r.Status, &created,
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.Name, &r.Arguments, &r.Status, &r.ContextJSON, &created,
 			&resultID, &resultToolCallID, &resultOutput, &resultError, &resultCreated); err != nil {
 			return nil, err
 		}
@@ -262,22 +281,22 @@ func (s *Store) ExportSession(ctx context.Context, sessionID int64) (ExportData,
 }
 
 func (s *Store) ListMessages(ctx context.Context, sessionID int64) ([]Message, error) {
-	rows, err := s.db.QueryContext(ctx, `select role,content,created_at from messages where session_id=? order by id asc`, sessionID)
+	rows, err := s.db.QueryContext(ctx, `select role,content,metadata_json,created_at from messages where session_id=? order by id asc`, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 	var out []Message
 	for rows.Next() {
-		var role, content, created string
-		if err := rows.Scan(&role, &content, &created); err != nil {
+		var role, content, metadata, created string
+		if err := rows.Scan(&role, &content, &metadata, &created); err != nil {
 			return nil, err
 		}
 		t, parseErr := time.Parse(time.RFC3339, created)
 		if parseErr != nil {
 			fmt.Fprintf(os.Stderr, "[qodex] failed to parse message created_at: %v\n", parseErr)
 		}
-		out = append(out, Message{Role: role, Content: content, CreatedAt: t})
+		out = append(out, Message{Role: role, Content: content, Metadata: metadata, CreatedAt: t})
 	}
 	return out, rows.Err()
 }

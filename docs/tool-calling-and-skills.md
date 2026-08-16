@@ -187,7 +187,7 @@ Qodex always prefers keeping the active skill set small.
 
 - the built-in or local `project` skill is included when present
 - additional skills are selected by keyword heuristics
-- model-assisted routing can be enabled with `agent.skill_routing = "model"`
+- routing is deterministic and local; the legacy `agent.skill_routing = "model"` value is accepted for compatibility but does not call the provider
 
 Only relevant sections of large skills are rendered into the model context when section slicing is enabled.
 

@@ -80,6 +80,76 @@ func TestSelectCapAtThree(t *testing.T) {
 	}
 }
 
+func TestSelectTieBreaksByNameAndReturnsDiagnostics(t *testing.T) {
+	all := []Skill{
+		{Name: "project", Content: "# Project"},
+		{Name: "zeta", Content: "# Zeta", Meta: Metadata{Triggers: []string{"same"}}},
+		{Name: "alpha", Content: "# Alpha", Meta: Metadata{Triggers: []string{"same"}}},
+	}
+	selection := SelectWithTools(all, nil, "same")
+	if len(selection.Skills) != 3 || selection.Skills[1].Name != "alpha" || selection.Skills[2].Name != "zeta" {
+		t.Fatalf("unexpected deterministic order: %#v", selection.Skills)
+	}
+	if len(selection.Matches) != 2 || len(selection.Matches[0].Reasons) == 0 {
+		t.Fatalf("expected match diagnostics: %#v", selection.Matches)
+	}
+}
+
+func TestActiveToolsUnionCoreSkillAndMatchingMCP(t *testing.T) {
+	selected := []Skill{{Name: "project"}, {Name: "docker", Meta: Metadata{AllowedTools: []string{"docker_run"}}}}
+	active := ActiveTools(selected, []ToolDescriptor{
+		{Name: "mcp_files_read", Description: "Read files from the remote workspace"},
+		{Name: "mcp_issue_create", Description: "Create an issue"},
+	}, "read files from the remote workspace")
+	set := map[string]bool{}
+	for _, name := range active {
+		set[name] = true
+	}
+	for _, name := range []string{"read_file", "run_tests", "docker_run", "mcp_files_read"} {
+		if !set[name] {
+			t.Fatalf("active tools missing %q: %v", name, active)
+		}
+	}
+	if set["mcp_issue_create"] {
+		t.Fatal("unmatched MCP tool was selected")
+	}
+}
+
+func TestSelectDoesNotUseSubstringContentMatches(t *testing.T) {
+	all := []Skill{
+		{Name: "project", Content: "# Project"},
+		{Name: "docker", Content: "# Docker\nUse the latest image for containers."},
+		{Name: "go", Content: "# Go\nUse Go modules."},
+	}
+	selection := SelectWithTools(all, nil, "check the latest release")
+	if len(selection.Skills) != 1 || selection.Skills[0].Name != "project" {
+		t.Fatalf("incidental content selected a skill: %#v", selection.Skills)
+	}
+	selection = SelectWithTools(all, nil, "this is a good idea")
+	if len(selection.Skills) != 1 || selection.Skills[0].Name != "project" {
+		t.Fatalf("substring skill name selected a skill: %#v", selection.Skills)
+	}
+}
+
+func TestSelectionDiagnosticsOnlyContainSelectedSkills(t *testing.T) {
+	all := []Skill{
+		{Name: "project", Content: "# Project"},
+		{Name: "alpha", Content: "# Alpha", Meta: Metadata{Triggers: []string{"task"}}},
+		{Name: "beta", Content: "# Beta", Meta: Metadata{Triggers: []string{"task"}}},
+		{Name: "gamma", Content: "# Gamma", Meta: Metadata{Triggers: []string{"task"}}},
+		{Name: "delta", Content: "# Delta", Meta: Metadata{Triggers: []string{"task"}}},
+	}
+	selection := SelectWithTools(all, nil, "task")
+	if len(selection.Skills) != 3 || len(selection.Matches) != 2 {
+		t.Fatalf("expected diagnostics for two selected skills: skills=%v matches=%v", selection.Skills, selection.Matches)
+	}
+	for _, match := range selection.Matches {
+		if match.Name == "delta" {
+			t.Fatalf("unselected skill in diagnostics: %#v", selection.Matches)
+		}
+	}
+}
+
 func TestSelectNoMatchReturnsProjectOnly(t *testing.T) {
 	skills := []Skill{
 		{Name: "project", Content: "# Project"},
@@ -157,8 +227,13 @@ func TestAllowedToolsNoRestriction(t *testing.T) {
 		{Name: "project", Content: "# Project"},
 	}
 	result := AllowedTools(skills)
-	if result != nil {
-		t.Fatalf("expected nil when no skill restricts tools, got %v", result)
+	if len(result) == 0 {
+		t.Fatal("expected bounded default tools when no skill restricts tools")
+	}
+	for _, name := range result {
+		if name == "docker_run" || name == "user_del" {
+			t.Fatalf("default tools should exclude optional/destructive tool %q", name)
+		}
 	}
 }
 

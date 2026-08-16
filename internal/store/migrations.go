@@ -73,6 +73,20 @@ create table if not exists tool_results (
 );
 create index if not exists idx_output_artifacts_session on output_artifacts(session_id);`,
 	},
+	{
+		version: 4,
+		up:      `alter table messages add column metadata_json text not null default '';`,
+	},
+	{
+		version: 5,
+		up: `alter table sessions add column skills_json text not null default '[]';
+alter table sessions add column allowed_tools_json text not null default '[]';
+alter table sessions add column tool_mode text not null default '';`,
+	},
+	{
+		version: 6,
+		up:      `alter table tool_calls add column context_json text not null default '';`,
+	},
 }
 
 func (s *Store) migrate(ctx context.Context) error {

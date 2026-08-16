@@ -8,6 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/benoybose/qodex/internal/agent"
+	"github.com/benoybose/qodex/internal/config"
+	"github.com/benoybose/qodex/internal/model"
 	"github.com/benoybose/qodex/internal/store"
 )
 
@@ -126,6 +128,10 @@ func TestSlashCommands(t *testing.T) {
 		wantAction    string
 	}{
 		{input: "/help", handled: true, wantImmediate: "Slash commands:"},
+		{input: "/model", handled: true, wantImmediate: "Use /model list"},
+		{input: "/model groq llama-3.1-8b-instant", handled: true, wantAction: "__slash_model:groq llama-3.1-8b-instant"},
+		{input: "/model groq", handled: true, wantAction: "__slash_model:groq"},
+		{input: "/model openrouter", handled: true, wantAction: "__slash_model:openrouter"},
 		{input: "/plan", handled: true, wantImmediate: "Plan state"},
 		{input: "/compact", handled: true, wantImmediate: "compacted"},
 		{input: "/commit release notes", handled: true, wantAction: "release notes"},
@@ -144,6 +150,28 @@ func TestSlashCommands(t *testing.T) {
 		if tc.wantAction != "" && !strings.Contains(action, tc.wantAction) {
 			t.Errorf("%q action = %q, want substring %q", tc.input, action, tc.wantAction)
 		}
+	}
+}
+
+func TestRunSlashModelHostedProvider(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Defaults(root)
+	client := model.NewClient(cfg.Model.BaseURL, cfg.Model.Model)
+	a := agent.New(agent.Options{Config: cfg, Client: client})
+
+	msg := runSlashModel(a, "groq llama-3.1-8b-instant TEAM_GROQ_KEY")()
+	result, ok := msg.(slashResultMsg)
+	if !ok || result.err != nil {
+		t.Fatalf("unexpected slash result: %#v (err=%v)", msg, result.err)
+	}
+	if a.Config().Model.BaseURL != "https://api.groq.com/openai/v1" || a.Config().Model.Model != "llama-3.1-8b-instant" {
+		t.Fatalf("unexpected active model: %+v", a.Config().Model)
+	}
+	if a.Config().Model.Auth.Type != "bearer" || a.Config().Model.Auth.TokenEnv != "TEAM_GROQ_KEY" {
+		t.Fatalf("unexpected auth config: %+v", a.Config().Model.Auth)
+	}
+	if !strings.Contains(result.text, "TEAM_GROQ_KEY") {
+		t.Fatalf("expected env var guidance: %q", result.text)
 	}
 }
 

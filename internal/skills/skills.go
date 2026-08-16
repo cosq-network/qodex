@@ -19,14 +19,48 @@ import (
 const (
 	maxKeywordSelectedSkills = 3
 	maxModelSelectedSkills   = 2
+	minimumSkillScore        = 10
 )
 
+// defaultAllowedTools is the small, project-oriented tool set exposed when
+// no specialized skill has narrowed the registry. Keeping this bounded is
+// important for native tool calling: sending every optional integration on
+// every request wastes context and makes tool selection less reliable.
+var defaultAllowedTools = []string{
+	"list_files", "read_file", "search_text", "write_file", "write_patch",
+	"run_command", "run_script", "run_tests", "run_formatter", "review_changes",
+	"project_index", "lsp_diagnostics", "lsp_definition", "lsp_find_references",
+	"git_status", "git_diff", "git_log", "git_workspace_summary", "git_stage",
+	"git_commit", "git_branch", "git_worktree", "git_undo", "git_snapshot", "git_restore_snapshot",
+}
+
 type Metadata struct {
+	Description   string   `toml:"description"`
 	Triggers      []string `toml:"triggers"`
 	AllowedTools  []string `toml:"allowed_tools"`
 	ContextBudget int      `toml:"context_budget"`
 	ContextTokens int      `toml:"context_budget_tokens"` // legacy alias kept for existing skills
 	Scripts       []Script `toml:"scripts"`
+}
+
+// ToolDescriptor is the small amount of information the local matcher needs
+// to decide whether an optional integration belongs in a turn.
+type ToolDescriptor struct {
+	Name        string
+	Description string
+}
+
+type Match struct {
+	Name    string
+	Score   int
+	Reasons []string
+}
+
+// Selection is the complete, deterministic per-turn routing decision.
+type Selection struct {
+	Skills      []Skill
+	ActiveTools []string
+	Matches     []Match
 }
 
 // Budget returns the skill's context budget in bytes, honoring the canonical
@@ -275,6 +309,13 @@ func Discover(projectRoot string) ([]Skill, error) {
 }
 
 func Select(all []Skill, prompt string) []Skill {
+	return SelectWithTools(all, nil, prompt).Skills
+}
+
+// SelectWithTools performs all routing locally. Project instructions are
+// always retained, while optional skills and external tools must match the
+// current prompt. Results are stable for identical inputs.
+func SelectWithTools(all []Skill, toolDescriptors []ToolDescriptor, prompt string) Selection {
 	prompt = strings.ToLower(prompt)
 
 	type scored struct {
@@ -284,6 +325,7 @@ func Select(all []Skill, prompt string) []Skill {
 
 	var project *Skill
 	var scoredSkills []scored
+	var matches []Match
 
 	for _, skill := range all {
 		name := strings.ToLower(skill.Name)
@@ -292,21 +334,32 @@ func Select(all []Skill, prompt string) []Skill {
 			project = &s
 			continue
 		}
-		score := matchScore(skill, prompt)
-		if score > 0 || strings.Contains(prompt, "/skill "+name) {
-			if score < 1 {
-				score = 1
-			}
+		score, reasons := scoreSkill(skill, prompt)
+		if score >= minimumSkillScore {
 			scoredSkills = append(scoredSkills, scored{skill, score})
+			matches = append(matches, Match{Name: skill.Name, Score: score, Reasons: reasons})
 		}
 	}
 
 	sort.Slice(scoredSkills, func(i, j int) bool {
-		return scoredSkills[i].score > scoredSkills[j].score
+		if scoredSkills[i].score != scoredSkills[j].score {
+			return scoredSkills[i].score > scoredSkills[j].score
+		}
+		return scoredSkills[i].skill.Name < scoredSkills[j].skill.Name
+	})
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].Score != matches[j].Score {
+			return matches[i].Score > matches[j].Score
+		}
+		return matches[i].Name < matches[j].Name
 	})
 
-	if len(scoredSkills) > maxKeywordSelectedSkills-1 {
-		scoredSkills = scoredSkills[:maxKeywordSelectedSkills-1]
+	limit := maxKeywordSelectedSkills
+	if project != nil {
+		limit--
+	}
+	if len(scoredSkills) > limit {
+		scoredSkills = scoredSkills[:limit]
 	}
 
 	result := make([]Skill, 0, maxKeywordSelectedSkills)
@@ -320,58 +373,209 @@ func Select(all []Skill, prompt string) []Skill {
 		}
 	}
 
-	return result
+	active := ActiveTools(result, toolDescriptors, prompt)
+	selectedNames := make(map[string]bool, len(result))
+	for _, skill := range result {
+		selectedNames[skill.Name] = true
+	}
+	selectedMatches := matches[:0]
+	for _, match := range matches {
+		if selectedNames[match.Name] {
+			selectedMatches = append(selectedMatches, match)
+		}
+	}
+	return Selection{Skills: result, ActiveTools: active, Matches: selectedMatches}
 }
 
 func matchScore(skill Skill, prompt string) int {
+	score, _ := scoreSkill(skill, strings.ToLower(prompt))
+	return score
+}
+
+func scoreSkill(skill Skill, prompt string) (int, []string) {
 	score := 0
+	var reasons []string
 	promptLower := strings.ToLower(prompt)
+	name := strings.ToLower(skill.Name)
+	if explicitSkill(promptLower, name) {
+		score += 10000
+		reasons = append(reasons, "explicit /skill override")
+	}
 
 	for _, trigger := range skill.Meta.Triggers {
-		if strings.Contains(promptLower, strings.ToLower(trigger)) {
-			score += 20
+		if containsPhrase(promptLower, trigger) {
+			score += 100
+			reasons = append(reasons, "trigger: "+trigger)
 		}
 	}
 
-	name := strings.ToLower(skill.Name)
-	if strings.Contains(promptLower, name) {
-		score += 10
+	if containsPhrase(promptLower, name) {
+		score += 80
+		reasons = append(reasons, "skill name")
+	}
+	if containsPhrase(promptLower, skill.Meta.Description) {
+		score += 30
+		reasons = append(reasons, "description")
 	}
 
 	content := strings.ToLower(skill.Content)
 	content = strings.ReplaceAll(content, "\r\n", "\n")
 	lines := strings.Split(content, "\n")
 
+	promptWords := meaningfulWords(promptLower)
 	seen := map[string]bool{}
+	bodyHits := 0
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "//") {
 			continue
 		}
-		words := strings.Fields(trimmed)
+		words := strings.Fields(normalizeText(trimmed))
 		isHeading := strings.HasPrefix(trimmed, "# ") || strings.HasPrefix(trimmed, "## ")
 		for _, w := range words {
-			if isHeading {
-				w = strings.Trim(w, ".,:;!?()[]")
-			} else {
-				w = strings.Trim(w, ".,:;!?()[]{}'\"`")
-			}
-			w = strings.ToLower(w)
-			if len(w) < 4 || seen[w] {
+			if !meaningfulWord(w) || seen[w] {
 				continue
 			}
 			seen[w] = true
-			if strings.Contains(promptLower, w) {
+			if promptWords[w] {
 				if isHeading {
-					score += 3
+					score += 10
+					reasons = append(reasons, "heading: "+w)
 				} else {
-					score += 1
+					bodyHits++
 				}
 			}
 		}
 	}
+	if bodyHits > 0 {
+		score += bodyHits * 4
+		reasons = append(reasons, fmt.Sprintf("content keywords: %d", bodyHits))
+	}
 
-	return score
+	return score, reasons
+}
+
+func containsPhrase(text, phrase string) bool {
+	textWords := strings.Fields(normalizeText(text))
+	phraseWords := strings.Fields(normalizeText(phrase))
+	if len(phraseWords) == 0 || len(phraseWords) > len(textWords) {
+		return false
+	}
+	for i := 0; i <= len(textWords)-len(phraseWords); i++ {
+		matched := true
+		for j := range phraseWords {
+			if !matchWord(textWords[i+j], phraseWords[j]) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+func matchWord(text, phrase string) bool {
+	return text == phrase || text == phrase+"s"
+}
+
+func explicitSkill(prompt, name string) bool {
+	return containsPhrase(prompt, "/skill "+name)
+}
+
+var ignoredMatchWords = map[string]bool{
+	"about": true, "after": true, "before": true, "from": true, "have": true,
+	"into": true, "just": true, "like": true, "need": true, "please": true,
+	"that": true, "than": true, "this": true, "when": true, "with": true,
+}
+
+func normalizeText(value string) string {
+	value = strings.ToLower(value)
+	var b strings.Builder
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte(' ')
+		}
+	}
+	return b.String()
+}
+
+func normalizeWord(value string) string {
+	return strings.TrimSpace(normalizeText(value))
+}
+
+func meaningfulWord(word string) bool {
+	return len(word) >= 4 && !ignoredMatchWords[word]
+}
+
+func meaningfulWords(text string) map[string]bool {
+	words := make(map[string]bool)
+	for _, word := range strings.Fields(normalizeText(text)) {
+		if meaningfulWord(word) {
+			words[word] = true
+		}
+	}
+	return words
+}
+
+// ActiveTools returns core tools plus the union of selected skill packs and
+// matching MCP descriptors. Unknown names are retained so the agent can
+// report a useful dispatch error, while the registry remains authoritative.
+func ActiveTools(selected []Skill, descriptors []ToolDescriptor, prompt string) []string {
+	set := make(map[string]bool, len(defaultAllowedTools))
+	for _, name := range defaultAllowedTools {
+		set[name] = true
+	}
+	mcpMatches := make(map[string]bool, len(descriptors))
+	for _, tool := range descriptors {
+		mcpMatches[tool.Name] = descriptorMatches(strings.ToLower(prompt), tool)
+		if mcpMatches[tool.Name] {
+			set[tool.Name] = true
+		}
+	}
+	for _, skill := range selected {
+		for _, name := range skill.Meta.AllowedTools {
+			if strings.HasPrefix(name, "mcp_") && !mcpMatches[name] {
+				continue
+			}
+			set[name] = true
+		}
+	}
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func descriptorMatches(prompt string, tool ToolDescriptor) bool {
+	if containsPhrase(prompt, tool.Name) || containsPhrase(prompt, tool.Description) {
+		return true
+	}
+	// MCP names commonly use underscores while users use spaces. Match
+	// meaningful name/description words without letting stop words select a
+	// remote tool accidentally.
+	terms := func(value string) []string {
+		value = strings.NewReplacer("_", " ", "-", " ", "/", " ").Replace(strings.ToLower(value))
+		var out []string
+		for _, word := range strings.Fields(value) {
+			word = strings.Trim(word, ".,:;!?()[]{}'\"`")
+			if len(word) >= 4 && word != "with" && word != "from" && word != "that" {
+				out = append(out, word)
+			}
+		}
+		return out
+	}
+	for _, candidate := range append(terms(tool.Name), terms(tool.Description)...) {
+		if meaningfulWords(prompt)[candidate] {
+			return true
+		}
+	}
+	return false
 }
 
 func Summarize(skills []Skill) string {
@@ -523,7 +727,7 @@ func AllowedTools(selected []Skill) []string {
 		}
 	}
 	if !anyRestrict {
-		return nil
+		return append([]string(nil), defaultAllowedTools...)
 	}
 	return intersection
 }

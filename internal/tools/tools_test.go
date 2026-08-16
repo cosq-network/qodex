@@ -18,6 +18,21 @@ func TestSafePathRejectsEscape(t *testing.T) {
 	}
 }
 
+func TestSafePathRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	registry := NewRegistry(root)
+	if _, err := registry.safePath("linked/secret.txt"); err == nil {
+		t.Fatal("expected symlink escape to be rejected")
+	}
+}
+
 func TestWritePatch(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "hello.txt"), []byte("hello\n"), 0o644); err != nil {

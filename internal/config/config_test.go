@@ -60,6 +60,14 @@ temperature = 4
 	}
 }
 
+func TestValidateRejectsAPIKeyInTokenEnvironmentSetting(t *testing.T) {
+	cfg := Defaults(t.TempDir())
+	cfg.Model.Auth = ModelAuthConfig{Type: "bearer", TokenEnv: "gsk_secret"}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "appears to contain an API key") {
+		t.Fatalf("expected API key configuration error, got %v", err)
+	}
+}
+
 func TestLoadRejectsMalformedTOML(t *testing.T) {
 	root := t.TempDir()
 	restore := chdir(t, root)

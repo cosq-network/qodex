@@ -24,3 +24,11 @@ func processAlive(process *os.Process) bool {
 	const stillActive = 259
 	return windows.GetExitCodeProcess(handle, &exitCode) == nil && exitCode == stillActive
 }
+
+// Windows does not expose a uniformly available command-line inspection API
+// without depending on optional system tooling. The process handle check still
+// prevents stale PIDs; the endpoint health check in Manager.Status provides the
+// second identity signal on this platform.
+func processMatches(process *os.Process, backend Backend) bool {
+	return process != nil && backend != BackendExternal
+}

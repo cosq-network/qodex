@@ -74,6 +74,134 @@ func TestSelectSetupModelDownloadsChosenModel(t *testing.T) {
 	}
 }
 
+func TestSetupModelForProfile(t *testing.T) {
+	tests := []struct {
+		profile setupProfile
+		want    string
+	}{
+		{setupProfileConsumer, consumerSetupModel},
+		{setupProfileServer, serverSetupModel},
+		{setupProfileGPUServer, gpuServerSetupModel},
+	}
+	for _, tt := range tests {
+		if got := setupModelForProfile(tt.profile); got != tt.want {
+			t.Errorf("setupModelForProfile(%q) = %q, want %q", tt.profile, got, tt.want)
+		}
+	}
+}
+
+func TestChooseSetupTargetConfirmsBeforeLocalDownload(t *testing.T) {
+	reg := &fakeSetupRegistry{
+		models:     []model.ModelInfo{{Name: consumerSetupModel, Size: "3.8 GB"}},
+		downloaded: map[string]bool{},
+	}
+	reader := bufio.NewReader(strings.NewReader("1\ny\n"))
+	var out, errOut bytes.Buffer
+	target, err := chooseSetupTarget(reader, setupProfileConsumer, model.BackendLlamaCpp, consumerSetupModel, reg, &out, &errOut)
+	if err != nil {
+		t.Fatalf("chooseSetupTarget error: %v", err)
+	}
+	if !target.local || target.model != consumerSetupModel {
+		t.Fatalf("target = %+v, want local default target", target)
+	}
+	if len(reg.calls) != 0 {
+		t.Fatalf("model downloaded before confirmation: %v", reg.calls)
+	}
+	if !strings.Contains(out.String(), "Download "+consumerSetupModel+" now?") {
+		t.Fatalf("missing download confirmation: %q", out.String())
+	}
+}
+
+func TestChooseSetupTargetCanConfigureOpenRouter(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "")
+	reg := &fakeSetupRegistry{}
+	reader := bufio.NewReader(strings.NewReader("3\n2\n\n\n"))
+	var out, errOut bytes.Buffer
+	target, err := chooseSetupTarget(reader, setupProfileServer, model.BackendLlamaCpp, serverSetupModel, reg, &out, &errOut)
+	if err != nil {
+		t.Fatalf("chooseSetupTarget error: %v", err)
+	}
+	if target.local || target.backend != model.BackendExternal {
+		t.Fatalf("target = %+v, want hosted external target", target)
+	}
+	if target.baseURL != "https://openrouter.ai/api/v1" || target.tokenEnv != "OPENROUTER_API_KEY" {
+		t.Fatalf("unexpected OpenRouter target: %+v", target)
+	}
+	if target.authType != "bearer" || target.model != "openai/gpt-oss-20b" {
+		t.Fatalf("unexpected hosted auth/model: %+v", target)
+	}
+}
+
+func TestHostedCredentialRecognizesProviderKey(t *testing.T) {
+	envName, key := hostedCredential("gsk_example_key", "GROQ_API_KEY")
+	if envName != "GROQ_API_KEY" || key != "gsk_example_key" {
+		t.Fatalf("credential = (%q, %q)", envName, key)
+	}
+	envName, key = hostedCredential("TEAM_GROQ_KEY", "GROQ_API_KEY")
+	if envName != "TEAM_GROQ_KEY" || key != "" {
+		t.Fatalf("environment credential = (%q, %q)", envName, key)
+	}
+}
+
+func TestWriteHostedSetupStoresOnlyTokenEnvironmentName(t *testing.T) {
+	t.Setenv("GROQ_API_KEY", "")
+	root := t.TempDir()
+	err := writeHostedSetup(root, setupTarget{
+		backend:  model.BackendExternal,
+		baseURL:  "https://api.groq.com/openai/v1",
+		model:    "llama-3.3-70b-versatile",
+		authType: "bearer",
+		tokenEnv: "GROQ_API_KEY",
+	})
+	if err != nil {
+		t.Fatalf("writeHostedSetup error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".qodex", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `auth = { type = "bearer", token_env = "GROQ_API_KEY"`) {
+		t.Fatalf("missing hosted auth configuration:\n%s", text)
+	}
+	if !strings.Contains(text, `tool_calls = "native"`) {
+		t.Fatalf("hosted setup must enable native tool calls:\n%s", text)
+	}
+	if strings.Contains(text, "secret") {
+		t.Fatalf("config unexpectedly contains a secret: %s", text)
+	}
+}
+
+func TestDetectSetupProfileOverride(t *testing.T) {
+	t.Setenv("QODEX_SETUP_PROFILE", "gpu-server")
+	if got := detectSetupProfile(); got != setupProfileGPUServer {
+		t.Fatalf("detectSetupProfile() = %q, want %q", got, setupProfileGPUServer)
+	}
+
+	t.Setenv("QODEX_SETUP_PROFILE", "desktop")
+	if got := detectSetupProfile(); got != setupProfileConsumer {
+		t.Fatalf("detectSetupProfile() = %q, want %q", got, setupProfileConsumer)
+	}
+}
+
+func TestEnsureSetupModelDownloadsRecommendedModel(t *testing.T) {
+	reg := &fakeSetupRegistry{
+		models:     []model.ModelInfo{{Name: serverSetupModel, Size: "4.7 GB"}},
+		downloaded: map[string]bool{},
+	}
+	var out, errOut bytes.Buffer
+	ready, err := ensureSetupModel(context.Background(), reg, serverSetupModel, &out, &errOut)
+	if err != nil {
+		t.Fatalf("ensureSetupModel error: %v", err)
+	}
+	if !ready || len(reg.calls) != 1 || reg.calls[0] != serverSetupModel {
+		t.Fatalf("result = ready:%v calls:%v, want downloaded %s", ready, reg.calls, serverSetupModel)
+	}
+	if !strings.Contains(out.String(), "Downloading recommended model") {
+		t.Fatalf("expected automatic download message, got %q", out.String())
+	}
+}
+
 func TestSelectSetupModelAllowsManualContinuation(t *testing.T) {
 	reg := &fakeSetupRegistry{
 		models: []model.ModelInfo{
@@ -143,6 +271,9 @@ func TestWriteSetupFilesWritesExternalConfig(t *testing.T) {
 	}
 	if !strings.Contains(text, `base_url = "https://example.test/v1"`) {
 		t.Fatalf("expected base_url in config:\n%s", text)
+	}
+	if !strings.Contains(text, `tool_calls = "prompt"`) {
+		t.Fatalf("expected prompt tool mode for default local-style config:\n%s", text)
 	}
 }
 

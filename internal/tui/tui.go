@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -21,7 +22,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/benoybose/qodex/internal/agent"
+	"github.com/benoybose/qodex/internal/config"
 	"github.com/benoybose/qodex/internal/mcp"
+	"github.com/benoybose/qodex/internal/model"
 	"github.com/benoybose/qodex/internal/skills"
 	"github.com/benoybose/qodex/internal/store"
 )
@@ -460,6 +463,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.refresh()
 					return m, runSlashMCP(m.agent, strings.TrimPrefix(actionPrompt, "__slash_mcp:"))
 				}
+				if strings.HasPrefix(actionPrompt, "__slash_model:") {
+					m.busy = true
+					m.busyLabel = "Switching model"
+					m.refresh()
+					return m, runSlashModel(m.agent, strings.TrimPrefix(actionPrompt, "__slash_model:"))
+				}
 				if actionPrompt == "__slash_export" {
 					m.refresh()
 					return m, runSlashExport(m.agent)
@@ -613,8 +622,13 @@ func (m *Model) handleSlashCommand(input string) (handled bool, immediate string
 		return false, "", ""
 	case "/help":
 		return true, slashHelp(), ""
-	case "/model", "/session", "/theme", "/settings":
+	case "/session", "/theme", "/settings":
 		return true, helpStyle.Render(m.localCommandOutput(command)), ""
+	case "/model":
+		if args == "" {
+			return true, helpStyle.Render(m.localCommandOutput(command)), ""
+		}
+		return true, "", "__slash_model:" + args
 	case "/clear":
 		m.clearTranscript()
 		return true, helpStyle.Render("Transcript cleared."), ""
@@ -760,6 +774,11 @@ func (m *Model) executePaletteCommand() tea.Cmd {
 		if strings.HasPrefix(action, "__slash_mcp:") {
 			return runSlashMCP(m.agent, strings.TrimPrefix(action, "__slash_mcp:"))
 		}
+		if strings.HasPrefix(action, "__slash_model:") {
+			m.busy = true
+			m.busyLabel = "Switching model"
+			return runSlashModel(m.agent, strings.TrimPrefix(action, "__slash_model:"))
+		}
 	}
 	return nil
 }
@@ -775,7 +794,11 @@ func (m Model) localCommandOutput(command string) string {
 	cfg := m.agent.Config()
 	switch command {
 	case "/model":
-		return fmt.Sprintf("Model: %s\nBackend: %s", cfg.Model.Model, cfg.Runtime.Backend)
+		provider := "local"
+		if cfg.Runtime.Backend == string(model.BackendExternal) {
+			provider = cfg.Model.BaseURL
+		}
+		return fmt.Sprintf("Model: %s\nProvider: %s\nBackend: %s\n\nUse /model list, /model local <downloaded-model>, /model groq [model], or /model openrouter [model].", cfg.Model.Model, provider, cfg.Runtime.Backend)
 	case "/session":
 		return fmt.Sprintf("Session: %d\nProject: %s", m.agent.SessionID(), cfg.ProjectRoot)
 	case "/theme":
@@ -836,6 +859,12 @@ func slashHelp() string {
 
 /help              Show this help
 /model             Show active model and backend
+/model list        List downloaded local models and hosted provider commands
+/model local NAME  Switch to a downloaded local model
+/model groq        Discover Groq models using GROQ_API_KEY
+/model groq MODEL  Switch to a Groq model
+/model openrouter  Discover OpenRouter models using OPENROUTER_API_KEY
+/model openrouter MODEL  Switch to an OpenRouter model
 /session           Show current session details
 /clear             Clear the visible transcript
 /export            Copy the current session as JSON
@@ -850,6 +879,113 @@ func slashHelp() string {
 /undo [COMMIT]     Revert a commit through the agent
 
 Use /skill <name> in a prompt to explicitly route a skill.`))
+}
+
+func runSlashModel(a *agent.Agent, args string) tea.Cmd {
+	return func() tea.Msg {
+		fields := strings.Fields(args)
+		if len(fields) == 0 || strings.EqualFold(fields[0], "list") {
+			return slashResultMsg{text: listModelChoices(a)}
+		}
+		switch strings.ToLower(fields[0]) {
+		case "local":
+			if len(fields) < 2 {
+				return slashResultMsg{err: fmt.Errorf("usage: /model local <downloaded-model>")}
+			}
+			name := strings.Join(fields[1:], " ")
+			installRoot := config.UserConfigDir()
+			registry := model.NewModelRegistry(installRoot)
+			if !registry.IsDownloaded(name) {
+				return slashResultMsg{err: fmt.Errorf("local model %q is not downloaded; use /model list or qodex models download", name)}
+			}
+			mgr := model.NewManager(model.BackendLlamaCpp, installRoot, name, 0)
+			if state, err := mgr.LoadState(); err == nil && state.Model != "" && state.Model != name {
+				status, _ := mgr.Status(context.Background())
+				if status.Running {
+					if err := mgr.Stop(); err != nil {
+						return slashResultMsg{err: fmt.Errorf("stop previous local model: %w", err)}
+					}
+				} else {
+					// Prevent stale state from overriding the requested model.
+					_ = mgr.ClearState()
+				}
+			}
+			if err := mgr.EnsureRunning(context.Background()); err != nil {
+				return slashResultMsg{err: fmt.Errorf("start local model: %w", err)}
+			}
+			previous := a.Config().Model.Model
+			if err := a.ConfigureModel(context.Background(), config.ModelConfig{Provider: "openai-compatible", BaseURL: fmt.Sprintf("http://127.0.0.1:%d/v1", mgr.Port()), Model: name}, string(model.BackendLlamaCpp)); err != nil {
+				return slashResultMsg{err: err}
+			}
+			return slashResultMsg{text: fmt.Sprintf("Switched from %s to local model %s.", previous, name)}
+		case "groq", "openrouter":
+			provider := strings.ToLower(fields[0])
+			modelName, baseURL, envName := hostedModelDefaults(provider)
+			if len(fields) < 2 || strings.EqualFold(fields[1], "list") {
+				return discoverHostedModels(provider, baseURL, envName)
+			}
+			if len(fields) >= 2 {
+				modelName = fields[1]
+			}
+			if len(fields) >= 3 {
+				envName = fields[2]
+			}
+			if err := a.ConfigureModel(context.Background(), config.ModelConfig{Provider: "openai-compatible", BaseURL: baseURL, Model: modelName, Auth: config.ModelAuthConfig{Type: "bearer", TokenEnv: envName}}, string(model.BackendExternal)); err != nil {
+				return slashResultMsg{err: err}
+			}
+			return slashResultMsg{text: fmt.Sprintf("Switched to %s model %s. Export %s before sending prompts.", provider, modelName, envName)}
+		default:
+			return slashResultMsg{err: fmt.Errorf("unknown model source %q; use /model list", fields[0])}
+		}
+	}
+}
+
+func discoverHostedModels(provider, baseURL, envName string) tea.Msg {
+	if strings.TrimSpace(os.Getenv(envName)) == "" {
+		return slashResultMsg{err: fmt.Errorf("%s is not set; export it before discovering %s models", envName, provider)}
+	}
+	client := model.NewClient(baseURL, "")
+	client.SetAuth("bearer", envName, "")
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		return slashResultMsg{err: fmt.Errorf("discover %s models: %w", provider, err)}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s models (use /model %s MODEL to switch):\n", provider, provider)
+	for i, name := range models {
+		fmt.Fprintf(&b, "%d. %s\n", i+1, name)
+	}
+	return slashResultMsg{text: b.String()}
+}
+
+func hostedModelDefaults(provider string) (modelName, baseURL, envName string) {
+	if provider == "openrouter" {
+		return "openai/gpt-oss-20b", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"
+	}
+	return "llama-3.3-70b-versatile", "https://api.groq.com/openai/v1", "GROQ_API_KEY"
+}
+
+func listModelChoices(a *agent.Agent) string {
+	registry := model.NewModelRegistry(config.UserConfigDir())
+	models, err := registry.List()
+	if err != nil {
+		return fmt.Sprintf("Unable to list local models: %v", err)
+	}
+	var b strings.Builder
+	b.WriteString("Downloaded local models:\n")
+	count := 0
+	for _, item := range models {
+		if item.Downloaded || registry.IsDownloaded(item.Name) {
+			fmt.Fprintf(&b, "- %s\n", item.Name)
+			count++
+		}
+	}
+	if count == 0 {
+		b.WriteString("- none\n")
+	}
+	b.WriteString("\nHosted providers:\n- /model groq [MODEL] [TOKEN_ENV]\n- /model openrouter [MODEL] [TOKEN_ENV]\n")
+	b.WriteString(fmt.Sprintf("\nActive: %s (%s)\n", a.Config().Model.Model, a.Config().Runtime.Backend))
+	return b.String()
 }
 
 func runSlashSkills(a *agent.Agent, filter string) tea.Cmd {
@@ -871,6 +1007,18 @@ func runSlashSkills(a *agent.Agent, filter string) tea.Cmd {
 		}
 		if count == 0 {
 			b.WriteString("No matching skills found.\n")
+		}
+		progress := a.Progress()
+		b.WriteString("\nActive this turn:\n")
+		if len(progress.ActiveSkills) == 0 {
+			b.WriteString("- none\n")
+		} else {
+			fmt.Fprintf(&b, "- skills: %s\n", strings.Join(progress.ActiveSkills, ", "))
+		}
+		if len(progress.ActiveTools) == 0 {
+			b.WriteString("- tools: none\n")
+		} else {
+			fmt.Fprintf(&b, "- tools: %s\n", strings.Join(progress.ActiveTools, ", "))
 		}
 		return slashResultMsg{text: b.String()}
 	}
@@ -1014,6 +1162,9 @@ func (m Model) progressView() string {
 	}
 	if len(p.ActiveSkills) > 0 {
 		parts = append(parts, "Skills: "+strings.Join(p.ActiveSkills, ", "))
+	}
+	if len(p.ActiveTools) > 0 {
+		parts = append(parts, fmt.Sprintf("Tools: %d", len(p.ActiveTools)))
 	}
 	if len(p.FilesInspected) > 0 {
 		parts = append(parts, fmt.Sprintf("Files: %d", len(p.FilesInspected)))

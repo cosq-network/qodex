@@ -10,10 +10,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	runtimepkg "runtime"
+	"strconv"
 	"strings"
 
 	"github.com/benoybose/qodex/internal/config"
+	"github.com/benoybose/qodex/internal/credentials"
 	"github.com/benoybose/qodex/internal/model"
+	"github.com/charmbracelet/x/term"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
@@ -25,6 +28,31 @@ type setupModelSource interface {
 	IsDownloaded(string) bool
 	SetProgressFunc(model.ProgressFunc)
 }
+
+type setupProfile string
+
+type setupTarget struct {
+	backend  model.Backend
+	model    string
+	baseURL  string
+	authType string
+	tokenEnv string
+	header   string
+	apiKey   string // setup-only; never written to config
+	local    bool
+}
+
+const (
+	setupProfileConsumer  setupProfile = "consumer"
+	setupProfileServer    setupProfile = "server"
+	setupProfileGPUServer setupProfile = "gpu-server"
+)
+
+const (
+	consumerSetupModel  = "deepseek-coder-6.7b-q4_k_m.gguf"
+	serverSetupModel    = "qwen2.5-coder-7b-q4_k_m.gguf"
+	gpuServerSetupModel = "qwen2.5-coder-32b-q4_k_m.gguf"
+)
 
 func downloadProgress() model.ProgressFunc {
 	bar := model.NewProgress(0)
@@ -41,11 +69,11 @@ func downloadProgress() model.ProgressFunc {
 func setupCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "setup",
-		Short: "Interactive first-time setup wizard",
+		Short: "Automatically configure Qodex for this system",
 		Long: `Walks through configuring Qodex:
-1. Choose backend (llama.cpp, vLLM, or SGLang)
+1. Detect the system profile and compatible local backend
 2. Download/install the backend automatically
-3. Configure a model (download a GGUF for llama.cpp, or use a model ID for vLLM/SGLang)
+3. Select and download the profile-appropriate model
 4. Start the model server
 5. Create configuration`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -59,50 +87,36 @@ func setupCmd() *cobra.Command {
 }
 
 func runSetup(projectRoot string) error {
+	if isatty.IsTerminal(os.Stdin.Fd()) {
+		return runSetupTUI(projectRoot)
+	}
 	reader := bufio.NewReader(os.Stdin)
-
 	fmt.Println()
 	fmt.Println("╔══════════════════════════════════════════════╗")
 	fmt.Println("║         Qodex Setup Wizard                  ║")
 	fmt.Println("╚══════════════════════════════════════════════╝")
 	fmt.Println()
 
-	// Step 1: Choose backend
-	fmt.Println("Step 1: Choose Backend")
-	fmt.Println("Select the model backend to use:")
-	fmt.Println("  1. llama.cpp (recommended for Apple Silicon/Linux)")
-	fmt.Println("  2. vLLM (for HuggingFace models with Python)")
-	fmt.Println("  3. SGLang (high-performance inference)")
-	fmt.Println("  4. External OpenAI-compatible endpoint")
-	fmt.Print("\nChoice [1]: ")
-	choice := readInput(reader, "1")
-
-	var backend model.Backend
-	switch choice {
-	case "1":
-		backend = model.BackendLlamaCpp
-	case "2":
-		backend = model.BackendVLLM
-	case "3":
-		backend = model.BackendSGLang
-	case "4":
-		backend = model.BackendExternal
-	default:
-		backend = model.BackendLlamaCpp
+	// Step 1: Detect the system and choose a compatible backend/model pair.
+	profile := detectSetupProfile()
+	defaultBackend := automaticSetupBackend()
+	defaultModel := setupModelForProfile(profile)
+	fmt.Printf("Step 1: Detecting system\n  Profile: %s\n  Backend: %s\n  Model:   %s\n", profile, defaultBackend, defaultModel)
+	registry := model.NewModelRegistry(getInstallRoot())
+	target, err := chooseSetupTarget(reader, profile, defaultBackend, defaultModel, registry, os.Stdout, os.Stderr)
+	if err != nil {
+		return err
 	}
-
-	if fallback := maybeRedirectUnsupportedManagedBackend(reader, backend, os.Stdout); fallback == model.BackendExternal {
-		backend = fallback
-	}
-
-	if backend == model.BackendExternal {
-		return runExternalSetup(projectRoot, reader)
+	backend := target.backend
+	modelName := target.model
+	if !target.local {
+		return writeHostedSetup(projectRoot, target)
 	}
 
 	// Step 2: Install backend
-	fmt.Println("\nStep 2: Install Backend")
+	fmt.Println("\nStep 3: Install Backend")
 	installRoot := getInstallRoot()
-	mgr := model.NewManager(backend, installRoot, "qwen2.5-coder-7b-q4_k_m.gguf", 0)
+	mgr := model.NewManager(backend, installRoot, modelName, 0)
 
 	fmt.Printf("Installing %s...\n", backend)
 	if err := mgr.Install(context.Background()); err != nil {
@@ -113,29 +127,11 @@ func runSetup(projectRoot string) error {
 		fmt.Printf("  ✓ %s installed\n", backend)
 	}
 
-	// Step 3: Configure the model. llama.cpp consumes a local GGUF; Python
-	// backends resolve a Hugging Face model ID themselves.
-	fmt.Println("\nStep 3: Choose Model")
-	modelName := ""
-	modelReady := false
-	if backend == model.BackendLlamaCpp {
-		registry := model.NewModelRegistry(installRoot)
-		var err error
-		modelName, modelReady, err = selectSetupModel(context.Background(), reader, registry, os.Stdout, os.Stderr)
-		if err != nil {
-			fmt.Printf("  ✗ Model setup failed: %s\n", err)
-			fmt.Println("  Continuing with manual model setup...")
-		}
-		if modelName == "" {
-			modelName = readInput(reader, "qwen2.5-coder-7b-q4_k_m.gguf")
-			modelReady = registry.IsDownloaded(modelName)
-			if !modelReady {
-				printManualModelHelp(os.Stderr, modelName, registry.ModelsDir())
-			}
-		}
-	} else {
-		modelName = selectRemoteModel(reader, backend)
-		modelReady = true
+	// Step 3: Acquire the automatically selected GGUF model.
+	fmt.Println("\nStep 4: Preparing Model")
+	modelReady, err := ensureSetupModel(context.Background(), registry, modelName, os.Stdout, os.Stderr)
+	if err != nil {
+		fmt.Printf("  ✗ Model setup failed: %s\n", err)
 	}
 	if !modelReady {
 		return fmt.Errorf("model %q is not available; download it and rerun qodex setup", modelName)
@@ -145,7 +141,7 @@ func runSetup(projectRoot string) error {
 	mgr.SetThreads(runtimepkg.NumCPU())
 
 	// Step 4: Start server
-	fmt.Println("\nStep 4: Start Model Server")
+	fmt.Println("\nStep 5: Start Model Server")
 	if !modelReady {
 		fmt.Println("Skipping automatic start because no local model is available yet.")
 		fmt.Println("Download the selected model with 'qodex models download <model-name>' and then run 'qodex serve start'.")
@@ -161,7 +157,7 @@ func runSetup(projectRoot string) error {
 	}
 
 	// Step 5: Create config
-	fmt.Println("\nStep 5: Creating Configuration")
+	fmt.Println("\nStep 6: Creating Configuration")
 	cfg := config.Defaults(projectRoot)
 	cfg.Runtime.Backend = string(backend)
 	cfg.Model.BaseURL = fmt.Sprintf("http://127.0.0.1:%d/v1", mgr.Port())
@@ -188,6 +184,307 @@ func runSetup(projectRoot string) error {
 	fmt.Println()
 
 	return nil
+}
+
+func chooseSetupTarget(reader *bufio.Reader, profile setupProfile, backend model.Backend, defaultModel string, registry setupModelSource, out, errOut io.Writer) (setupTarget, error) {
+	for {
+		_, _ = fmt.Fprintf(out, "\nStep 2: Choose how to continue\n  1. Download the recommended local model (%s)\n  2. Choose a different catalog model\n  3. Configure Groq or OpenRouter with a BYOK environment variable\nChoose [1]: ", defaultModel)
+		choice := readInput(reader, "1")
+		switch choice {
+		case "", "1":
+			_, _ = fmt.Fprintf(out, "Download %s now? [Y/n]: ", defaultModel)
+			if promptYesNo(reader, nil, "", true) {
+				return setupTarget{backend: backend, model: defaultModel, local: true}, nil
+			}
+			_, _ = fmt.Fprintln(out, "No model will be downloaded. Choose another option to continue.")
+		case "2":
+			modelName, err := chooseCatalogModel(reader, registry, out)
+			if err != nil {
+				return setupTarget{}, err
+			}
+			_, _ = fmt.Fprintf(out, "Download %s now? [Y/n]: ", modelName)
+			if promptYesNo(reader, nil, "", true) {
+				return setupTarget{backend: backend, model: modelName, local: true}, nil
+			}
+			_, _ = fmt.Fprintln(out, "No model will be downloaded. Choose another option to continue.")
+		case "3":
+			return configureHostedTarget(reader, out)
+		default:
+			_, _ = fmt.Fprintln(errOut, "Please choose 1, 2, or 3.")
+		}
+	}
+}
+
+func chooseCatalogModel(reader *bufio.Reader, registry setupModelSource, out io.Writer) (string, error) {
+	models, err := registry.List()
+	if err != nil {
+		return "", fmt.Errorf("list catalog models: %w", err)
+	}
+	if len(models) == 0 {
+		return "", fmt.Errorf("no catalog models are available")
+	}
+	_, _ = fmt.Fprintln(out, "Available catalog models:")
+	for i, item := range models {
+		_, _ = fmt.Fprintf(out, "  %d. %s (%s)\n", i+1, item.Name, item.Size)
+	}
+	_, _ = fmt.Fprintf(out, "Choose model [1]: ")
+	choice := readInput(reader, "1")
+	index := 1
+	if _, err := fmt.Sscanf(choice, "%d", &index); err != nil || index < 1 || index > len(models) {
+		index = 1
+	}
+	return models[index-1].Name, nil
+}
+
+func configureHostedTarget(reader *bufio.Reader, out io.Writer) (setupTarget, error) {
+	_, _ = fmt.Fprintln(out, "\nHosted provider setup (API keys are never written to Qodex config)")
+	_, _ = fmt.Fprint(out, "Provider [1=Groq, 2=OpenRouter]: ")
+	choice := readInput(reader, "1")
+	target := setupTarget{backend: model.BackendExternal, local: false, authType: "bearer"}
+	switch choice {
+	case "", "1":
+		target.baseURL = "https://api.groq.com/openai/v1"
+		target.model = "llama-3.3-70b-versatile"
+		credential := readCredential(reader, out, "API key environment variable or pasted key [GROQ_API_KEY]: ", "GROQ_API_KEY")
+		target.tokenEnv, target.apiKey = hostedCredential(credential, "GROQ_API_KEY")
+	case "2":
+		target.baseURL = "https://openrouter.ai/api/v1"
+		target.model = "openai/gpt-oss-20b"
+		credential := readCredential(reader, out, "API key environment variable or pasted key [OPENROUTER_API_KEY]: ", "OPENROUTER_API_KEY")
+		target.tokenEnv, target.apiKey = hostedCredential(credential, "OPENROUTER_API_KEY")
+	default:
+		return setupTarget{}, fmt.Errorf("unsupported hosted provider choice %q", choice)
+	}
+	if !validEnvironmentVariableName(target.tokenEnv) {
+		return setupTarget{}, fmt.Errorf("invalid environment variable name %q", target.tokenEnv)
+	}
+	target.model = selectHostedModel(reader, out, target.baseURL, target.authType, target.tokenEnv, target.apiKey, target.model)
+	if target.apiKey != "" || strings.TrimSpace(os.Getenv(target.tokenEnv)) != "" {
+		_, _ = fmt.Fprintf(out, "Credential accepted; Qodex will store it securely after configuration.\n")
+	} else {
+		_, _ = fmt.Fprintf(out, "No credential found; Qodex will use its secure credential store or %s when available.\n", target.tokenEnv)
+	}
+	return target, nil
+}
+
+func hostedCredential(value, fallbackEnv string) (envName, apiKey string) {
+	value = strings.TrimSpace(value)
+	if looksLikeHostedAPIKey(value) {
+		return fallbackEnv, value
+	}
+	return value, ""
+}
+
+func looksLikeHostedAPIKey(value string) bool {
+	return strings.HasPrefix(value, "gsk_") || strings.HasPrefix(value, "sk-or-")
+}
+
+func selectHostedModel(reader *bufio.Reader, out io.Writer, baseURL, authType, tokenEnv, apiKey, fallback string) string {
+	if apiKey == "" && strings.TrimSpace(os.Getenv(tokenEnv)) == "" {
+		_, _ = fmt.Fprintf(out, "%s is not set; using the default model %s. Set the key and use /model %s list to discover models later.\n", tokenEnv, fallback, hostedProviderName(baseURL))
+		return fallback
+	}
+	client := model.NewClient(baseURL, fallback)
+	client.SetAuth(authType, tokenEnv, "")
+	client.SetAuthToken(apiKey)
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		_, _ = fmt.Fprintf(out, "Could not discover provider models (%v); using %s.\n", err, fallback)
+		return fallback
+	}
+	return chooseHostedModel(reader, out, models, fallback)
+}
+
+func chooseHostedModel(reader *bufio.Reader, out io.Writer, models []string, fallback string) string {
+	_, _ = fmt.Fprintln(out, "Available hosted models:")
+	for i, name := range models {
+		_, _ = fmt.Fprintf(out, "  %d. %s\n", i+1, name)
+	}
+	_, _ = fmt.Fprintf(out, "Choose model [1] or enter a model ID (%s): ", fallback)
+	choice := readInput(reader, "1")
+	if index, err := strconv.Atoi(choice); err == nil && index >= 1 && index <= len(models) {
+		return models[index-1]
+	}
+	if strings.TrimSpace(choice) != "" {
+		return strings.TrimSpace(choice)
+	}
+	return fallback
+}
+
+func hostedProviderName(baseURL string) string {
+	if strings.Contains(baseURL, "openrouter") {
+		return "openrouter"
+	}
+	return "groq"
+}
+
+func validEnvironmentVariableName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_' || (i > 0 && r >= '0' && r <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func readInputPrompt(reader *bufio.Reader, out io.Writer, prompt, fallback string) string {
+	_, _ = fmt.Fprint(out, prompt)
+	return readInput(reader, fallback)
+}
+
+func readCredential(reader *bufio.Reader, out io.Writer, prompt, fallback string) string {
+	_, _ = fmt.Fprint(out, prompt)
+	if isatty.IsTerminal(os.Stdin.Fd()) {
+		value, err := term.ReadPassword(os.Stdin.Fd())
+		_, _ = fmt.Fprintln(out)
+		if err == nil && strings.TrimSpace(string(value)) != "" {
+			return strings.TrimSpace(string(value))
+		}
+		return fallback
+	}
+	return readInput(reader, fallback)
+}
+
+func writeHostedSetup(projectRoot string, target setupTarget) error {
+	cfg := config.Defaults(projectRoot)
+	cfg.Runtime.Backend = string(model.BackendExternal)
+	cfg.Model.BaseURL = target.baseURL
+	cfg.Model.Model = target.model
+	cfg.Agent.ToolCalls = "native"
+	cfg.Model.Auth = config.ModelAuthConfig{Type: target.authType, TokenEnv: target.tokenEnv, Header: target.header}
+	if err := writeSetupFiles(projectRoot, cfg); err != nil {
+		return err
+	}
+	providerKey := strings.TrimSpace(target.apiKey)
+	if providerKey == "" {
+		providerKey = strings.TrimSpace(os.Getenv(target.tokenEnv))
+	}
+	if providerKey != "" {
+		if err := credentials.Save(projectRoot, target.tokenEnv, providerKey); err != nil {
+			return fmt.Errorf("store hosted provider credential securely: %w", err)
+		}
+		fmt.Printf("Stored %s securely in the operating system credential store.\n", target.tokenEnv)
+	} else {
+		fmt.Printf("No %s value was available to store; Qodex will use the environment when it is set.\n", target.tokenEnv)
+	}
+	fmt.Printf("\nConfigured %s with model %s.\n", target.baseURL, target.model)
+	fmt.Printf("The credential will be loaded automatically by Qodex.\n")
+	return nil
+}
+
+func setupModelForProfile(profile setupProfile) string {
+	switch profile {
+	case setupProfileGPUServer:
+		return gpuServerSetupModel
+	case setupProfileServer:
+		return serverSetupModel
+	default:
+		return consumerSetupModel
+	}
+}
+
+// automaticSetupBackend deliberately selects llama.cpp for the built-in GGUF
+// catalog. It works across supported managed platforms and is the only
+// backend contract compatible with the profile models above. Native Windows
+// falls back to external endpoint mode because managed llama.cpp installation
+// is not supported there yet.
+func automaticSetupBackend() model.Backend {
+	if runtimepkg.GOOS == "windows" {
+		return model.BackendExternal
+	}
+	return model.BackendLlamaCpp
+}
+
+func detectSetupProfile() setupProfile {
+	if override := strings.ToLower(strings.TrimSpace(os.Getenv("QODEX_SETUP_PROFILE"))); override != "" {
+		switch override {
+		case string(setupProfileGPUServer), "gpu", "gpu_server":
+			return setupProfileGPUServer
+		case string(setupProfileServer):
+			return setupProfileServer
+		case string(setupProfileConsumer), "laptop", "desktop":
+			return setupProfileConsumer
+		}
+	}
+
+	server := isServerEnvironment()
+	if server && hasGPU() {
+		return setupProfileGPUServer
+	}
+	if server {
+		return setupProfileServer
+	}
+	return setupProfileConsumer
+}
+
+func isServerEnvironment() bool {
+	for _, key := range []string{"QODEX_SERVER", "KUBERNETES_SERVICE_HOST", "CONTAINER", "container"} {
+		if value := strings.ToLower(strings.TrimSpace(os.Getenv(key))); value == "1" || value == "true" || value == "yes" || value != "" && key != "QODEX_SERVER" {
+			return true
+		}
+	}
+	if runtimepkg.GOOS == "linux" {
+		for _, path := range []string{"/var/lib/cloud/instance", "/etc/cloud/cloud.cfg"} {
+			if _, err := os.Stat(path); err == nil {
+				return true
+			}
+		}
+		// A headless Linux host with server-class resources is a reasonable
+		// server signal, while avoiding classifying ordinary GUI workstations.
+		if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" && runtimepkg.NumCPU() >= 16 && systemMemoryBytes() >= 32<<30 {
+			return true
+		}
+	}
+	return false
+}
+
+func hasGPU() bool {
+	for _, command := range []string{"nvidia-smi", "rocm-smi"} {
+		if _, err := exec.LookPath(command); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func systemMemoryBytes() int64 {
+	if runtimepkg.GOOS == "linux" {
+		data, err := os.ReadFile("/proc/meminfo")
+		if err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 && fields[0] == "MemTotal:" {
+					kb, _ := strconv.ParseInt(fields[1], 10, 64)
+					return kb * 1024
+				}
+			}
+		}
+	}
+	if runtimepkg.GOOS == "darwin" {
+		if output, err := exec.Command("sysctl", "-n", "hw.memsize").Output(); err == nil {
+			bytes, _ := strconv.ParseInt(strings.TrimSpace(string(output)), 10, 64)
+			return bytes
+		}
+	}
+	return 0
+}
+
+func ensureSetupModel(ctx context.Context, registry setupModelSource, modelName string, out, errOut io.Writer) (bool, error) {
+	if registry.IsDownloaded(modelName) {
+		_, _ = fmt.Fprintf(out, "  ✓ Model already available: %s\n", modelName)
+		return true, nil
+	}
+	_, _ = fmt.Fprintf(out, "  Downloading recommended model: %s\n", modelName)
+	registry.SetProgressFunc(downloadProgress())
+	if err := registry.Download(ctx, modelName); err != nil {
+		printManualModelHelp(errOut, modelName, registry.ModelsDir())
+		return false, err
+	}
+	return true, nil
 }
 
 func selectRemoteModel(reader *bufio.Reader, backend model.Backend) string {
@@ -318,10 +615,18 @@ func writeSetupFiles(projectRoot string, cfg config.Config) error {
 		return fmt.Errorf("create skill directory: %w", err)
 	}
 
+	authContent := ""
+	if cfg.Model.Auth.Type != "" && cfg.Model.Auth.Type != "none" {
+		authContent = fmt.Sprintf(`
+auth = { type = "%s", token_env = "%s", header = "%s" }
+`, cfg.Model.Auth.Type, cfg.Model.Auth.TokenEnv, cfg.Model.Auth.Header)
+	}
+
 	configContent := fmt.Sprintf(`[model]
 provider = "openai-compatible"
 base_url = "%s"
 model = "%s"
+%s
 
 [runtime]
 backend = "%s"
@@ -339,7 +644,8 @@ path = ".qodex/qodex.db"
 
 [agent]
 max_steps = 12
-`, cfg.Model.BaseURL, cfg.Model.Model, cfg.Runtime.Backend)
+tool_calls = "%s"
+`, cfg.Model.BaseURL, cfg.Model.Model, authContent, cfg.Runtime.Backend, cfg.Agent.ToolCalls)
 
 	if err := writeAtomic(configPath, []byte(configContent), 0o666); err != nil {
 		return fmt.Errorf("write config: %w", err)

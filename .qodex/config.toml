@@ -1,10 +1,13 @@
 [model]
 provider = "openai-compatible"
-base_url = "http://127.0.0.1:8080/v1"
-model = "qwen2.5-coder"
+base_url = "https://api.groq.com/openai/v1"
+model = "openai/gpt-oss-120b"
+
+auth = { type = "bearer", token_env = "GROQ_API_KEY", header = "" }
+
 
 [runtime]
-backend = "llama.cpp"
+backend = "external"
 context_tokens = 32768
 temperature = 0.2
 top_p = 0.95

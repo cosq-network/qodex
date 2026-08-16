@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -51,6 +52,55 @@ type Client struct {
 	Model      string
 	HTTPClient *http.Client
 	DebugLog   func(string, ...interface{})
+	AuthType   string
+	TokenEnv   string
+	AuthHeader string
+	authToken  string // ephemeral token supplied by setup; never persisted
+}
+
+// ListModels returns model IDs exposed by an OpenAI-compatible endpoint.
+// Providers may return additional metadata, but Qodex only needs the stable
+// ID used in chat completion requests.
+func (c *Client) ListModels(ctx context.Context) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	c.applyAuth(req)
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+	}
+	var payload struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("decode model list: %w", err)
+	}
+	models := make([]string, 0, len(payload.Data))
+	seen := make(map[string]struct{}, len(payload.Data))
+	for _, item := range payload.Data {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		models = append(models, id)
+	}
+	if len(models) == 0 {
+		return nil, fmt.Errorf("provider returned no usable models")
+	}
+	return models, nil
 }
 
 func NewClient(baseURL, model string) *Client {
@@ -67,11 +117,49 @@ func (c *Client) SetDebugLog(fn func(string, ...interface{})) {
 	c.DebugLog = fn
 }
 
+// SetAuth configures environment-backed authentication. The token itself is
+// intentionally never stored in Qodex configuration or client state.
+func (c *Client) SetAuth(authType, tokenEnv, header string) {
+	c.AuthType = strings.TrimSpace(authType)
+	c.TokenEnv = strings.TrimSpace(tokenEnv)
+	c.AuthHeader = strings.TrimSpace(header)
+}
+
+// SetAuthToken supplies an ephemeral token for one process, primarily for
+// setup-time provider discovery. It is intentionally not part of config.
+func (c *Client) SetAuthToken(token string) {
+	c.authToken = strings.TrimSpace(token)
+}
+
+func (c *Client) applyAuth(req *http.Request) {
+	if c.AuthType == "" || c.AuthType == "none" || c.TokenEnv == "" {
+		return
+	}
+	token := c.authToken
+	if token == "" {
+		token = os.Getenv(c.TokenEnv)
+	}
+	if token == "" {
+		return
+	}
+	switch c.AuthType {
+	case "bearer":
+		req.Header.Set("Authorization", "Bearer "+token)
+	case "api_key":
+		header := c.AuthHeader
+		if header == "" {
+			header = "X-API-Key"
+		}
+		req.Header.Set(header, token)
+	}
+}
+
 func (c *Client) Check(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/models", nil)
 	if err != nil {
 		return err
 	}
+	c.applyAuth(req)
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return err
@@ -102,6 +190,7 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, temperature
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
+	c.applyAuth(req)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -119,11 +208,11 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, temperature
 		defer close(ch)
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
-			line := scanner.Text()
-			if !strings.HasPrefix(line, "data: ") {
+			line := strings.TrimSpace(scanner.Text())
+			if !strings.HasPrefix(line, "data:") {
 				continue
 			}
-			data := strings.TrimPrefix(line, "data: ")
+			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if data == "[DONE]" {
 				return
 			}
@@ -173,6 +262,7 @@ func (c *Client) DetectCapabilities(ctx context.Context) Capabilities {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
+	c.applyAuth(req)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -209,6 +299,25 @@ func (c *Client) Chat(ctx context.Context, messages []Message, temperature, topP
 	if err != nil {
 		return "", err
 	}
+	if strings.TrimSpace(res.Content) == "" && len(res.ToolCalls) > 0 {
+		// Some OpenAI-compatible providers may emit a native tool call even
+		// when Qodex requested prompt-mode completion. Preserve it in the
+		// prompt-mode envelope instead of silently returning an empty response.
+		call := res.ToolCalls[0]
+		envelope := struct {
+			ToolCall struct {
+				Name      string          `json:"name"`
+				Arguments json.RawMessage `json:"arguments"`
+			} `json:"tool_call"`
+		}{}
+		envelope.ToolCall.Name = call.Function.Name
+		envelope.ToolCall.Arguments = call.Function.Arguments
+		encoded, marshalErr := json.Marshal(envelope)
+		if marshalErr != nil {
+			return "", marshalErr
+		}
+		return string(encoded), nil
+	}
 	return res.Content, nil
 }
 
@@ -234,6 +343,7 @@ func (c *Client) chatWithTools(ctx context.Context, messages []Message, temperat
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	c.applyAuth(req)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {

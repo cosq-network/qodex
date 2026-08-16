@@ -200,7 +200,7 @@ Project-local skills override user skills with the same name. A skill can includ
 - context budget
 - predefined scripts
 
-The agent can select skills via keyword heuristics or model-assisted routing, depending on `agent.skill_routing`.
+The agent selects skills locally and deterministically from prompt keywords, trigger metadata, descriptions, and content. Explicit `/skill <name>` requests take priority. The legacy `agent.skill_routing = "model"` value remains accepted for compatibility but does not make a provider routing request.
 
 Qodex also loads interoperable instruction files such as `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, `.github/copilot-instructions.md`, and `.cursor/rules/*.mdc`. They are context-only and cannot bypass approval or validation.
 

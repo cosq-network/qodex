@@ -20,6 +20,7 @@ import (
 
 	"github.com/benoybose/qodex/internal/agent"
 	"github.com/benoybose/qodex/internal/config"
+	"github.com/benoybose/qodex/internal/credentials"
 	"github.com/benoybose/qodex/internal/mcp"
 	"github.com/benoybose/qodex/internal/model"
 	"github.com/benoybose/qodex/internal/skills"
@@ -89,7 +90,7 @@ No configuration found? Run 'qodex setup' for an interactive setup wizard.`,
 			if !ensureConfigExists(cwd) {
 				return promptRunSetup(cwd)
 			}
-			return cmd.Help()
+			return runInteractiveChat(cmd, cfgPath, yes)
 		},
 	}
 	cmd.PersistentFlags().StringVar(&cfgPath, "config", "", "config file path")
@@ -297,6 +298,11 @@ func runCmd(cfgPath *string, yes *bool) *cobra.Command {
 				return err
 			}
 			defer rt.Close()
+			if sessionID != 0 {
+				if _, err := rt.Store.GetSession(cmd.Context(), sessionID); err != nil {
+					return fmt.Errorf("session not found: %d", sessionID)
+				}
+			}
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), interruptSignals...)
 			defer stop()
@@ -365,32 +371,36 @@ func chatCmd(cfgPath *string, yes *bool) *cobra.Command {
 		Use:   "chat",
 		Short: "Start the terminal chat UI",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return err
-			}
-			if *cfgPath == "" && !ensureConfigExists(cwd) {
-				if err := promptRunSetup(cwd); err != nil {
-					return err
-				}
-			}
-			rt, err := buildRuntime(*cfgPath, *yes, true, 0)
-			if err != nil {
-				return err
-			}
-			defer rt.Close()
-
-			var model tui.Model
-			if rt.AutoApprove {
-				model = tui.NewAutoApproved(rt.Agent).WithQuitCallback(rt.Agent.CancelProbe)
-			} else {
-				model = tui.New(rt.Agent).WithQuitCallback(rt.Agent.CancelProbe)
-			}
-			p := tea.NewProgram(model, tea.WithAltScreen())
-			_, err = p.Run()
-			return err
+			return runInteractiveChat(cmd, *cfgPath, *yes)
 		},
 	}
+}
+
+func runInteractiveChat(cmd *cobra.Command, cfgPath string, yes bool) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	if cfgPath == "" && !ensureConfigExists(cwd) {
+		if err := promptRunSetup(cwd); err != nil {
+			return err
+		}
+	}
+	rt, err := buildRuntime(cfgPath, yes, true, 0)
+	if err != nil {
+		return err
+	}
+	defer rt.Close()
+
+	var model tui.Model
+	if rt.AutoApprove {
+		model = tui.NewAutoApproved(rt.Agent).WithQuitCallback(rt.Agent.CancelProbe)
+	} else {
+		model = tui.New(rt.Agent).WithQuitCallback(rt.Agent.CancelProbe)
+	}
+	p := tea.NewProgram(model, tea.WithAltScreen())
+	_, err = p.Run()
+	return err
 }
 
 func doctorCmd(cfgPath *string) *cobra.Command {
@@ -406,13 +416,23 @@ func doctorCmd(cfgPath *string) *cobra.Command {
 			fmt.Printf("Model endpoint: %s\n", cfg.Model.BaseURL)
 			fmt.Printf("Model name: %s\n", cfg.Model.Model)
 			fmt.Printf("Runtime backend: %s\n", cfg.Runtime.Backend)
+			if cfg.Model.Auth.Type != "" && cfg.Model.Auth.Type != "none" {
+				_, source := resolveModelCredential(cfg)
+				if source == "" {
+					return fmt.Errorf("model authentication is configured for %s, but no credential was found in the OS credential store or environment variable %s", cfg.Model.Auth.Type, cfg.Model.Auth.TokenEnv)
+				}
+				fmt.Printf("Model authentication: configured (%s)\n", source)
+			} else {
+				fmt.Println("Model authentication: not configured")
+			}
 			if cfg.Runtime.Backend == string(model.BackendExternal) {
 				fmt.Println("Managed backend: external endpoint mode")
 				client := model.NewClient(cfg.Model.BaseURL, cfg.Model.Model)
+				configureModelClientAuth(client, cfg)
 				ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 				defer cancel()
 				if err := client.Check(ctx); err != nil {
-					return fmt.Errorf("model endpoint check failed: %w", err)
+					return modelCheckError(err)
 				}
 				fmt.Println("Model endpoint: ok")
 				return printMCPDiagnostics(cmd.Context(), cfg, "")
@@ -448,10 +468,11 @@ func doctorCmd(cfgPath *string) *cobra.Command {
 			}
 
 			client := model.NewClient(cfg.Model.BaseURL, cfg.Model.Model)
+			configureModelClientAuth(client, cfg)
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 			if err := client.Check(ctx); err != nil {
-				return fmt.Errorf("model endpoint check failed: %w", err)
+				return modelCheckError(err)
 			}
 			fmt.Println("Model endpoint: ok")
 			return printMCPDiagnostics(cmd.Context(), cfg, "")
@@ -783,6 +804,7 @@ func buildRuntime(cfgPath string, yes bool, tuiMode bool, sessionID int64) (*run
 	if err != nil {
 		return nil, err
 	}
+	cfg = preferHostedNativeTools(cfg)
 	cfg = maybeUseManagedRuntime(cfg)
 	db, err := store.Open(cfg.Store.Path)
 	if err != nil {
@@ -819,6 +841,7 @@ func buildRuntime(cfgPath string, yes bool, tuiMode bool, sessionID int64) (*run
 	}
 
 	client := model.NewClient(cfg.Model.BaseURL, cfg.Model.Model)
+	configureModelClientAuth(client, cfg)
 	if debugLog != nil {
 		client.SetDebugLog(func(format string, args ...interface{}) {
 			ts := time.Now().UTC().Format(time.RFC3339)
@@ -932,6 +955,47 @@ func buildRuntime(cfgPath string, yes bool, tuiMode bool, sessionID int64) (*run
 		}()
 	}
 	return &runtime{Agent: agt, Store: db, AutoApprove: yes || cfg.Approval.AutoApprove, MCPClients: mcpClients}, nil
+}
+
+func preferHostedNativeTools(cfg config.Config) config.Config {
+	if cfg.Runtime.Backend != string(model.BackendExternal) || cfg.Agent.ToolCalls == "native" {
+		return cfg
+	}
+	baseURL := strings.ToLower(cfg.Model.BaseURL)
+	if strings.Contains(baseURL, "api.groq.com") || strings.Contains(baseURL, "openrouter.ai") {
+		cfg.Agent.ToolCalls = "native"
+	}
+	return cfg
+}
+
+func configureModelClientAuth(client *model.Client, cfg config.Config) {
+	client.SetAuth(cfg.Model.Auth.Type, cfg.Model.Auth.TokenEnv, cfg.Model.Auth.Header)
+	if cfg.Model.Auth.Type == "" || cfg.Model.Auth.Type == "none" || cfg.Model.Auth.TokenEnv == "" {
+		return
+	}
+	if token, _ := resolveModelCredential(cfg); token != "" {
+		client.SetAuthToken(token)
+	}
+}
+
+func resolveModelCredential(cfg config.Config) (token, source string) {
+	if cfg.Model.Auth.Type == "" || cfg.Model.Auth.Type == "none" || cfg.Model.Auth.TokenEnv == "" {
+		return "", ""
+	}
+	if token, err := credentials.Load(cfg.ProjectRoot, cfg.Model.Auth.TokenEnv); err == nil && strings.TrimSpace(token) != "" {
+		return token, "OS credential store"
+	}
+	if token := strings.TrimSpace(os.Getenv(cfg.Model.Auth.TokenEnv)); token != "" {
+		return token, "environment variable " + cfg.Model.Auth.TokenEnv
+	}
+	return "", ""
+}
+
+func modelCheckError(err error) error {
+	if strings.Contains(err.Error(), "status 401") {
+		return fmt.Errorf("model endpoint check failed: API credential was rejected (HTTP 401); rotate the key and rerun qodex setup")
+	}
+	return fmt.Errorf("model endpoint check failed: %w", err)
 }
 
 func sanitizeMCPName(value string) string {

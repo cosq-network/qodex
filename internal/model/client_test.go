@@ -30,6 +30,85 @@ func TestCheckSuccess(t *testing.T) {
 	}
 }
 
+func TestClientAppliesEnvironmentBackedBearerAuth(t *testing.T) {
+	t.Setenv("QODEX_TEST_PROVIDER_KEY", "secret-token")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer secret-token" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-model")
+	c.SetAuth("bearer", "QODEX_TEST_PROVIDER_KEY", "")
+	if err := c.Check(context.Background()); err != nil {
+		t.Fatalf("Check failed: %v", err)
+	}
+}
+
+func TestClientAppliesEphemeralAuthToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer setup-secret" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "test-model")
+	c.SetAuth("bearer", "GROQ_API_KEY", "")
+	c.SetAuthToken("setup-secret")
+	if err := c.Check(context.Background()); err != nil {
+		t.Fatalf("Check failed: %v", err)
+	}
+}
+
+func TestChatPreservesUnexpectedNativeToolCall(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"choices": []interface{}{
+			map[string]interface{}{"message": map[string]interface{}{
+				"content": nil,
+				"tool_calls": []interface{}{map[string]interface{}{
+					"id": "call_1", "type": "function",
+					"function": map[string]interface{}{"name": "list_files", "arguments": map[string]string{"path": "."}},
+				}},
+			}},
+		}})
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "test-model")
+	got, err := c.Chat(context.Background(), []Message{{Role: "user", Content: "inspect"}}, 0.2, 0.95)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"tool_call"`) || !strings.Contains(got, `"list_files"`) {
+		t.Fatalf("unexpected preserved tool call: %s", got)
+	}
+}
+
+func TestClientListsModelsWithAuthentication(t *testing.T) {
+	t.Setenv("QODEX_TEST_PROVIDER_KEY", "secret")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path = %s, want /v1/models", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer secret" {
+			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"model-b"},{"id":"model-a"},{"id":"model-b"}]}`))
+	}))
+	defer srv.Close()
+	client := NewClient(srv.URL+"/v1", "unused")
+	client.SetAuth("bearer", "QODEX_TEST_PROVIDER_KEY", "")
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 || models[0] != "model-b" || models[1] != "model-a" {
+		t.Fatalf("models = %#v", models)
+	}
+}
+
 func TestCheckFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

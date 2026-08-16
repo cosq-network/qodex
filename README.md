@@ -14,6 +14,12 @@ qodex doctor
 qodex chat
 ```
 
+Setup detects the machine profile automatically. Consumer devices use the
+DeepSeek Coder 6.7B GGUF, ordinary servers use Qwen Coder 7B, and GPU servers
+use Qwen Coder 32B. Before downloading any model, setup asks for confirmation:
+accept the default, choose another catalog model, or configure Groq/OpenRouter
+with a BYOK environment variable.
+
 Use `qodex run "..."` for one-shot tasks and `qodex review` to inspect uncommitted changes. The user guide is the authoritative reference for day-to-day operation; this README provides the project overview and compact reference.
 
 ## Current Status
@@ -26,7 +32,7 @@ The repository includes a fully featured coding agent with:
 - Prompt-based JSON tool calling with validation repair loop and optional native OpenAI `tools`/`tool_calls` support.
 - 98 built-in tools covering file/symbol search, LSP code intelligence, Git workflows, CMake/clang/make/.NET/Java toolchains, package managers, language runtimes, archives, Docker/QEMU, ADB, and system administration.
 - 31 built-in skills shipped with Qodex covering project conventions, git, go-testing, cmake, clang, make, curl, wget, java, rg, sed, base64, node, npm, npx, nvm, dotnet, nuget, msbuild, nmake, system packages, python, pip, conda, flutter, dart, archives, system admin, docker, qemu, and adb.
-- Skill system: `skill.toml` metadata (triggers, allowed_tools, context_budget, scripts), model-assisted or heuristic skill routing (`agent.skill_routing`), section-aware context slicing, and pre-approved script policy with provenance tracking.
+- Skill system: `skill.toml` metadata (triggers, allowed_tools, context_budget, scripts), deterministic local keyword routing, section-aware context slicing, and pre-approved script policy with provenance tracking.
 - SQLite session/tool event storage with WAL mode, migrations, and approval persistence.
 - Session resume with full tool history reconstruction (TUI via `sessions resume`, non-interactive via `run --session`), CLI JSON export, and TUI session export to the clipboard.
 - Approval gates for write, shell, and network tools with risk and affected-file summaries, compact/expandable diffs, once/session/always approval scopes, timeout countdowns, audit events, and `--yes` auto-approval.
@@ -43,7 +49,7 @@ The repository includes a fully featured coding agent with:
 
 ## CLI Reference
 
-`qodex` run without arguments prints help if configuration exists, otherwise launches the interactive setup prompt.
+`qodex` run without arguments prints help if configuration exists, otherwise launches automatic setup.
 
 Global flags (available on every command):
 
@@ -111,7 +117,7 @@ Unknown keys are rejected, and a project file inherits anything not set from use
 | `approval.network` | `ask` | Policy for network tools: `ask`, `allow`, or `deny` |
 | `store.path` | `.qodex/qodex.db` | SQLite database path |
 | `agent.max_steps` | `12` | Max agent loop iterations |
-| `agent.skill_routing` | `auto` | Skill selection: `auto` (heuristic) or `model` (model-assisted with heuristic fallback) |
+| `agent.skill_routing` | `auto` | Deterministic local keyword skill selection; `model` is retained as a compatibility value and uses the same local routing |
 | `agent.tool_calls` | `prompt` | Tool-call mechanism: `prompt` (inline JSON) or `native` (OpenAI `tools`/`tool_calls`; streaming disabled) |
 
 MCP servers can be configured under `[mcp.servers.<name>]` with stdio or Streamable HTTP transport, secret-by-environment authentication, trust, and per-tool permissions. Use `qodex mcp doctor` to verify installation, authentication, protocol health, discovered tools, and server capabilities. See [MCP Integration](docs/mcp.md).
@@ -168,7 +174,7 @@ Approval requests show a summary and, for writes, an inline LCS-based unified di
 
 `adb`, `archives`, `base64`, `clang`, `cmake`, `conda`, `curl`, `dart`, `docker`, `dotnet`, `flutter`, `git`, `go-testing`, `java`, `make`, `msbuild`, `nmake`, `node`, `npm`, `npx`, `nuget`, `nvm`, `pip`, `project`, `python`, `qemu`, `rg`, `sed`, `system-admin`, `system-packages`, `wget`
 
-Each skill is a directory with a `SKILL.md` plus a `skill.toml` declaring `name`, `description`, `version`, `triggers`, `allowed_tools`, and optional `scripts` (pre-approved shell snippets executed through `run_script` with `skill:<name>/script:<desc>` provenance). Skill context budgets use the `context_budget` key, with `context_budget_tokens` accepted as a legacy alias. The `allowed_tools` field also acts as a tool-pack boundary: specialized tools are exposed to the model only when the relevant skill is active. The `project` skill is always loaded first. Routing selects up to 3 skills heuristically (keyword/trigger matching, plus explicit `/skill <name>` prompts) or up to 2 via the model when `agent.skill_routing = "model"`. Skills are instructions, not authority — they cannot bypass validation or approval policy.
+Each skill is a directory with a `SKILL.md` plus a `skill.toml` declaring `name`, `description`, `version`, `triggers`, `allowed_tools`, and optional `scripts` (pre-approved shell snippets executed through `run_script` with `skill:<name>/script:<desc>` provenance). Skill context budgets use the `context_budget` key, with `context_budget_tokens` accepted as a legacy alias. Core repository, execution, test, formatting, index, LSP, and Git tools are always available; `allowed_tools` contributes specialized tools only when the relevant skill is active. The `project` skill is always loaded first. Routing selects up to 3 skills locally using deterministic keyword/trigger matching, metadata and content, plus explicit `/skill <name>` prompts. The legacy `agent.skill_routing = "model"` value is accepted but does not make a provider routing request. Skills are instructions, not authority — they cannot bypass validation or approval policy.
 
 ## Agent Loop
 
@@ -450,7 +456,7 @@ The CLI should treat this as an OpenAI-compatible base URL and should not requir
 ./qodex completion bash > /tmp/qodex-completion.sh
 ```
 
-Run `qodex` without arguments for the first time to trigger the interactive setup wizard, which will:
+Run `qodex` without arguments for the first time to trigger automatic setup, which will:
 1. Choose a backend (llama.cpp, vLLM, SGLang, or an external endpoint)
 2. Install the backend automatically where supported
 3. Select a catalog GGUF model for llama.cpp, or enter a Hugging Face model ID for vLLM/SGLang

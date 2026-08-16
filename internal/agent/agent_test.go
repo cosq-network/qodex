@@ -118,6 +118,162 @@ func TestAgentLoopWithFakeModelServer(t *testing.T) {
 	if chatCalls.Load() != 2 {
 		t.Fatalf("chat calls = %d, want 2", chatCalls.Load())
 	}
+	messages, err := db.ListMessages(context.Background(), agent.SessionID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles := make([]string, 0, len(messages))
+	for _, msg := range messages {
+		roles = append(roles, msg.Role)
+	}
+	if !strings.Contains(strings.Join(roles, ","), "tool") {
+		t.Fatalf("expected persisted native tool messages, roles=%v", roles)
+	}
+}
+
+func TestNativeToolBatchUsesOneAssistantMessage(t *testing.T) {
+	root := t.TempDir()
+	db, err := store.Open(filepath.Join(root, "qodex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := writeTestFile(filepath.Join(root, "README.md"), "hello\n"); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	client := model.NewClient("http://fake.local/v1", "fake")
+	client.HTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if calls.Add(1) == 1 {
+			return jsonResponse(map[string]interface{}{
+				"choices": []map[string]interface{}{{
+					"message": map[string]interface{}{
+						"role": "assistant",
+						"tool_calls": []map[string]interface{}{
+							{"id": "call_1", "type": "function", "function": map[string]interface{}{"name": "read_file", "arguments": json.RawMessage(`{"path":"README.md"}`)}},
+							{"id": "call_2", "type": "function", "function": map[string]interface{}{"name": "list_files", "arguments": json.RawMessage(`{"path":"."}`)}},
+						},
+					},
+				}},
+			}), nil
+		}
+		return jsonResponse(map[string]interface{}{"choices": []map[string]interface{}{{"message": map[string]string{"role": "assistant", "content": "done"}}}}), nil
+	})}
+	cfg := config.Defaults(root)
+	cfg.Model.BaseURL = "http://fake.local/v1"
+	cfg.Agent.ToolCalls = "native"
+	a := New(Options{Config: cfg, Client: client, Tools: tools.NewRegistry(root), Store: db, MaxSteps: 3})
+	if _, err := a.Run(context.Background(), "inspect"); err != nil {
+		t.Fatal(err)
+	}
+	messages, err := db.ListMessages(context.Background(), a.SessionID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var assistantWithTwoCalls, toolCount int
+	for _, msg := range messages {
+		if msg.Role == "assistant" && msg.Content == "" {
+			// Native tool-call arguments are retained in memory; the store keeps
+			// the assistant content and tool results, so count tool rows below.
+			assistantWithTwoCalls++
+		}
+		if msg.Role == "tool" {
+			toolCount++
+		}
+	}
+	if toolCount != 2 {
+		t.Fatalf("tool messages = %d, want 2; messages=%+v", toolCount, messages)
+	}
+	if assistantWithTwoCalls < 1 {
+		t.Fatalf("expected persisted assistant batch message: %+v", messages)
+	}
+	for _, msg := range messages {
+		if msg.Role == "assistant" && msg.Content == "" && !strings.Contains(msg.Metadata, "call_1") {
+			t.Fatalf("native assistant metadata missing: %+v", msg)
+		}
+	}
+	var batchCalls int
+	for _, msg := range a.messages {
+		if msg.Role == "assistant" && len(msg.ToolCalls) == 2 {
+			batchCalls++
+		}
+	}
+	if batchCalls != 1 {
+		t.Fatalf("assistant tool-call batches = %d, want 1; messages=%+v", batchCalls, a.messages)
+	}
+}
+
+func TestSessionRefreshesSkillsForEachTurn(t *testing.T) {
+	root := t.TempDir()
+	db, err := store.Open(filepath.Join(root, "qodex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	client := model.NewClient("http://fake.local/v1", "fake")
+	client.HTTPClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(map[string]interface{}{"choices": []map[string]interface{}{{"message": map[string]string{"role": "assistant", "content": "done"}}}}), nil
+	})}
+	cfg := config.Defaults(root)
+	a := New(Options{
+		Config: cfg, Client: client, Tools: tools.NewRegistry(root), Store: db, MaxSteps: 1,
+		Skills: []skills.Skill{
+			{Name: "project", Content: "# Project"},
+			{Name: "go", Content: "# Go", Meta: skills.Metadata{Triggers: []string{"go"}, AllowedTools: []string{"run_tests"}}},
+			{Name: "docker", Content: "# Docker", Meta: skills.Metadata{Triggers: []string{"docker"}, AllowedTools: []string{"docker_run"}}},
+		},
+	})
+	if _, err := a.Run(context.Background(), "go test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Run(context.Background(), "docker run"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.selectedSkills) != 2 || a.selectedSkills[1].Name != "docker" {
+		t.Fatalf("selected skills after second turn = %#v", a.selectedSkills)
+	}
+	if len(a.allowedTools) != 1 || a.allowedTools[0] != "docker_run" {
+		t.Fatalf("allowed tools after second turn = %#v", a.allowedTools)
+	}
+}
+
+func TestAgentRetriesTransientModelFailure(t *testing.T) {
+	root := t.TempDir()
+	db, err := store.Open(filepath.Join(root, "qodex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var calls atomic.Int32
+	client := model.NewClient("http://fake.local/v1", "fake")
+	client.HTTPClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		if calls.Add(1) == 1 {
+			return response(503, "temporarily unavailable"), nil
+		}
+		return jsonResponse(map[string]interface{}{"choices": []map[string]interface{}{{"message": map[string]string{"role": "assistant", "content": "recovered"}}}}), nil
+	})}
+	cfg := config.Defaults(root)
+	cfg.Model.BaseURL = "http://fake.local/v1"
+	a := New(Options{Config: cfg, Client: client, Tools: tools.NewRegistry(root), Store: db, MaxSteps: 2})
+	got, err := a.Run(context.Background(), "hello")
+	if err != nil || got != "recovered" {
+		t.Fatalf("result=%q err=%v", got, err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("model calls = %d, want 2", calls.Load())
+	}
+}
+
+func TestCompactContextStaysWithinBudget(t *testing.T) {
+	a := New(Options{Config: config.Config{Runtime: config.RuntimeConfig{ContextTokens: 80}}})
+	a.messages = []model.Message{{Role: "system", Content: "system instructions"}}
+	for i := 0; i < 10; i++ {
+		a.messages = append(a.messages, model.Message{Role: "user", Content: strings.Repeat("long context ", 40)})
+	}
+	a.CompactContext()
+	if got := a.messageTokens(a.messages); got > 56 {
+		t.Fatalf("compacted tokens = %d, want <= 56", got)
+	}
 }
 
 func TestAgentLoopWithNativeToolCalls(t *testing.T) {
@@ -329,6 +485,75 @@ func TestExecuteScriptRejectsUnknownDescription(t *testing.T) {
 	})
 	if err2 == nil {
 		t.Fatal("expected error for unknown script")
+	}
+}
+
+func TestExecuteScriptRejectsAmbiguousPartialDescription(t *testing.T) {
+	root := t.TempDir()
+	db, err := store.Open(filepath.Join(root, "qodex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	a := New(Options{Config: config.Defaults(root), Client: model.NewClient("http://fake.local/v1", "fake"), Tools: tools.NewRegistry(root), Store: db, MaxSteps: 1})
+	a.selectedSkills = []skills.Skill{{Name: "project", Meta: skills.Metadata{Scripts: []skills.Script{
+		{Description: "Run unit tests", Command: "go test ./..."},
+		{Description: "Run integration tests", Command: "go test ./integration/..."},
+	}}}}
+	_, err = a.executeScript(context.Background(), toolCall{Arguments: json.RawMessage(`{"description":"tests"}`)})
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("expected ambiguous script error, got %v", err)
+	}
+}
+
+func TestExecuteScriptRejectsUnsupportedTool(t *testing.T) {
+	root := t.TempDir()
+	db, err := store.Open(filepath.Join(root, "qodex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	a := New(Options{Config: config.Defaults(root), Client: model.NewClient("http://fake.local/v1", "fake"), Tools: tools.NewRegistry(root), Store: db, MaxSteps: 1})
+	a.selectedSkills = []skills.Skill{{Name: "project", Meta: skills.Metadata{Scripts: []skills.Script{{Description: "Build", Command: "make", Tool: "docker_run"}}}}}
+	_, err = a.executeScript(context.Background(), toolCall{Arguments: json.RawMessage(`{"description":"Build"}`)})
+	if err == nil || !strings.Contains(err.Error(), "unsupported tool") {
+		t.Fatalf("expected unsupported tool error, got %v", err)
+	}
+}
+
+func TestExecuteScriptHonorsShellApprovalPolicy(t *testing.T) {
+	root := t.TempDir()
+	db, err := store.Open(filepath.Join(root, "qodex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+
+	cfg := config.Defaults(root)
+	cfg.Approval.RunCommands = "deny"
+	agent := New(Options{
+		Config:    cfg,
+		Tools:     tools.NewRegistry(root),
+		Store:     db,
+		SessionID: 1,
+	})
+	agent.selectedSkills = []skills.Skill{{
+		Name: "project",
+		Meta: skills.Metadata{Scripts: []skills.Script{{Description: "Create marker", Command: "touch marker.txt"}}},
+	}}
+
+	result, err := agent.executeTool(context.Background(), toolCall{
+		Name:      "run_script",
+		Arguments: json.RawMessage(`{"description":"Create marker"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "approval denied") {
+		t.Fatalf("expected approval denial, got %s", result)
+	}
+	if _, err := os.Stat(filepath.Join(root, "marker.txt")); !os.IsNotExist(err) {
+		t.Fatalf("script ran despite deny policy: %v", err)
 	}
 }
 

@@ -26,6 +26,13 @@ type ModelConfig struct {
 	Provider string
 	BaseURL  string
 	Model    string
+	Auth     ModelAuthConfig
+}
+
+type ModelAuthConfig struct {
+	Type     string
+	TokenEnv string
+	Header   string
 }
 
 type RuntimeConfig struct {
@@ -187,9 +194,16 @@ type fileConfig struct {
 }
 
 type fileModelConfig struct {
-	Provider *string `toml:"provider"`
-	BaseURL  *string `toml:"base_url"`
-	Model    *string `toml:"model"`
+	Provider *string             `toml:"provider"`
+	BaseURL  *string             `toml:"base_url"`
+	Model    *string             `toml:"model"`
+	Auth     fileModelAuthConfig `toml:"auth"`
+}
+
+type fileModelAuthConfig struct {
+	Type     *string `toml:"type"`
+	TokenEnv *string `toml:"token_env"`
+	Header   *string `toml:"header"`
 }
 
 type fileRuntimeConfig struct {
@@ -249,6 +263,15 @@ func (f fileConfig) mergeInto(cfg *Config) {
 	}
 	if f.Model.Model != nil {
 		cfg.Model.Model = *f.Model.Model
+	}
+	if f.Model.Auth.Type != nil {
+		cfg.Model.Auth.Type = *f.Model.Auth.Type
+	}
+	if f.Model.Auth.TokenEnv != nil {
+		cfg.Model.Auth.TokenEnv = *f.Model.Auth.TokenEnv
+	}
+	if f.Model.Auth.Header != nil {
+		cfg.Model.Auth.Header = *f.Model.Auth.Header
 	}
 	if f.Runtime.Backend != nil {
 		cfg.Runtime.Backend = *f.Runtime.Backend
@@ -311,6 +334,12 @@ func apply(cfg *Config, section, key, val string) {
 		cfg.Model.BaseURL = strings.TrimRight(val, "/")
 	case "model.model":
 		cfg.Model.Model = val
+	case "model.auth.type":
+		cfg.Model.Auth.Type = val
+	case "model.auth.token_env":
+		cfg.Model.Auth.TokenEnv = val
+	case "model.auth.header":
+		cfg.Model.Auth.Header = val
 	case "runtime.backend":
 		cfg.Runtime.Backend = val
 	case "runtime.context_tokens":
@@ -386,6 +415,20 @@ func (c Config) Validate() error {
 	}
 	if c.Model.Model == "" {
 		return fmt.Errorf("model.model is required")
+	}
+	if c.Model.Auth.Type != "" && c.Model.Auth.Type != "none" && c.Model.Auth.Type != "bearer" && c.Model.Auth.Type != "api_key" {
+		return fmt.Errorf("model.auth.type must be none, bearer, or api_key")
+	}
+	if c.Model.Auth.Type != "" && c.Model.Auth.Type != "none" && strings.TrimSpace(c.Model.Auth.TokenEnv) == "" {
+		return fmt.Errorf("model.auth.token_env is required when model authentication is enabled")
+	}
+	if strings.HasPrefix(c.Model.Auth.TokenEnv, "gsk_") || strings.HasPrefix(c.Model.Auth.TokenEnv, "sk-or-") {
+		return fmt.Errorf("model.auth.token_env appears to contain an API key; use an environment variable name such as GROQ_API_KEY")
+	}
+	for field, value := range map[string]string{"token_env": c.Model.Auth.TokenEnv, "header": c.Model.Auth.Header} {
+		if strings.ContainsAny(value, "=\r\n") {
+			return fmt.Errorf("model.auth.%s contains invalid characters", field)
+		}
 	}
 	switch c.Runtime.Backend {
 	case "llama.cpp", "vllm", "sglang", "external":
@@ -467,6 +510,9 @@ func (c Config) Values() map[string]string {
 		"model.provider":         c.Model.Provider,
 		"model.base_url":         c.Model.BaseURL,
 		"model.model":            c.Model.Model,
+		"model.auth.type":        c.Model.Auth.Type,
+		"model.auth.token_env":   c.Model.Auth.TokenEnv,
+		"model.auth.header":      c.Model.Auth.Header,
 		"runtime.backend":        c.Runtime.Backend,
 		"runtime.context_tokens": strconv.Itoa(c.Runtime.ContextTokens),
 		"runtime.temperature":    strconv.FormatFloat(c.Runtime.Temperature, 'f', -1, 64),
@@ -497,18 +543,33 @@ func SetProjectValue(projectRoot, key, value string) error {
 		return fmt.Errorf("unknown config key: %s", key)
 	}
 	cfg := Defaults(projectRoot)
-	apply(&cfg, strings.TrimSuffix(sectionOf(key), "."), nameOf(key), value)
+	projectPath := ProjectConfigPath(projectRoot)
+	if _, err := os.Stat(projectPath); err == nil {
+		if err := mergeFile(&cfg, projectPath); err != nil {
+			return err
+		}
+	}
+	applySection, applyKey := sectionOf(key), nameOf(key)
+	if strings.HasPrefix(key, "model.auth.") {
+		applySection = "model.auth"
+	}
+	apply(&cfg, strings.TrimSuffix(applySection, "."), applyKey, value)
 	normalize(&cfg)
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
 
-	path := ProjectConfigPath(projectRoot)
+	path := projectPath
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	updated := setLine(string(data), key, value)
+	lineKey, lineValue := key, value
+	if strings.HasPrefix(key, "model.auth.") {
+		lineKey = "model.auth"
+		lineValue = fmt.Sprintf("{ type = %s, token_env = %s, header = %s }", strconv.Quote(cfg.Model.Auth.Type), strconv.Quote(cfg.Model.Auth.TokenEnv), strconv.Quote(cfg.Model.Auth.Header))
+	}
+	updated := setLine(string(data), lineKey, lineValue)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -516,11 +577,17 @@ func SetProjectValue(projectRoot, key, value string) error {
 }
 
 func sectionOf(key string) string {
+	if strings.HasPrefix(key, "model.auth.") {
+		return "model"
+	}
 	section, _, _ := strings.Cut(key, ".")
 	return section
 }
 
 func nameOf(key string) string {
+	if strings.HasPrefix(key, "model.auth.") {
+		return "auth"
+	}
 	_, name, ok := strings.Cut(key, ".")
 	if !ok {
 		return key
@@ -535,21 +602,30 @@ func setLine(content, dottedKey, value string) string {
 	lines := strings.Split(content, "\n")
 	current := ""
 	insertAt := len(lines)
+	foundSection := false
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
 			if current == section {
 				insertAt = i
+				foundSection = true
 			}
 			current = strings.TrimSuffix(strings.TrimPrefix(trimmed, "["), "]")
 			continue
 		}
 		if current == section {
 			if strings.HasPrefix(trimmed, name+" ") || strings.HasPrefix(trimmed, name+"=") {
-				lines[i] = name + " = " + formatValue(value)
+				lines[i] = name + " = " + formatConfigValue(dottedKey, value)
 				return strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
 			}
 		}
+	}
+	if current == section {
+		foundSection = true
+	}
+	if foundSection && insertAt == len(lines) {
+		lines = append(lines, name+" = "+formatConfigValue(dottedKey, value))
+		return strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
 	}
 	if insertAt == len(lines) {
 		if strings.TrimSpace(content) != "" {
@@ -557,10 +633,17 @@ func setLine(content, dottedKey, value string) string {
 		}
 		lines = append(lines, "["+section+"]", name+" = "+formatValue(value))
 	} else {
-		next := append([]string{name + " = " + formatValue(value)}, lines[insertAt:]...)
+		next := append([]string{name + " = " + formatConfigValue(dottedKey, value)}, lines[insertAt:]...)
 		lines = append(lines[:insertAt], next...)
 	}
 	return strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
+}
+
+func formatConfigValue(dottedKey, value string) string {
+	if dottedKey == "model.auth" {
+		return value
+	}
+	return formatValue(value)
 }
 
 func formatValue(value string) string {

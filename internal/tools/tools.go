@@ -28,6 +28,11 @@ type Tool struct {
 	Execute     func(context.Context, json.RawMessage) (Result, error)
 }
 
+type ToolDescriptor struct {
+	Name        string
+	Description string
+}
+
 type Result struct {
 	OK       bool                   `json:"ok"`
 	Summary  string                 `json:"summary"`
@@ -255,6 +260,22 @@ func (r *Registry) RegisterExternal(name, desc, effect string, parameters json.R
 func (r *Registry) HasTool(name string) bool {
 	_, ok := r.tools[name]
 	return ok
+}
+
+// Descriptors returns stable metadata for local keyword routing. It does not
+// expose parameters or execution functions.
+func (r *Registry) Descriptors() []ToolDescriptor {
+	names := make([]string, 0, len(r.tools))
+	for name := range r.tools {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]ToolDescriptor, 0, len(names))
+	for _, name := range names {
+		t := r.tools[name]
+		out = append(out, ToolDescriptor{Name: t.Name, Description: t.Description})
+	}
+	return out
 }
 
 func (r *Registry) ToolSchemas() []model.ToolSchema {
@@ -536,14 +557,40 @@ func (r *Registry) safePath(path string) (string, error) {
 	if path == "" {
 		path = "."
 	}
+	root, err := filepath.Abs(r.root)
+	if err != nil {
+		return "", err
+	}
+	root = filepath.Clean(root)
 	clean := filepath.Clean(path)
-	full := filepath.Join(r.root, clean)
-	rel, err := filepath.Rel(r.root, full)
+	full := filepath.Join(root, clean)
+	rel, err := filepath.Rel(root, full)
 	if err != nil {
 		return "", err
 	}
 	if pathEscapesRoot(path) || pathEscapesRoot(rel) {
 		return "", fmt.Errorf("path escapes project root: %s", path)
+	}
+
+	// Lexical checks do not protect against a repository symlink such as
+	// "docs/current -> / outside". Walk existing components with Lstat so
+	// read/write tools cannot follow symlinks outside the project boundary.
+	current := root
+	for _, component := range strings.Split(rel, string(filepath.Separator)) {
+		if component == "" || component == "." {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, statErr := os.Lstat(current)
+		if os.IsNotExist(statErr) {
+			break
+		}
+		if statErr != nil {
+			return "", statErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("path traverses a symlink: %s", path)
+		}
 	}
 	return full, nil
 }

@@ -277,12 +277,16 @@ func (m *Manager) extractTar(tarPath, destDir string) error {
 			return err
 		}
 
-		parts := strings.SplitN(header.Name, "/", 2)
+		parts := strings.SplitN(filepath.ToSlash(header.Name), "/", 2)
 		var rel string
 		if len(parts) == 2 {
 			rel = parts[1]
 		} else {
 			rel = header.Name
+		}
+		rel, err = safeArchivePath(rel)
+		if err != nil {
+			return fmt.Errorf("unsafe archive entry %q: %w", header.Name, err)
 		}
 
 		target := filepath.Join(destDir, rel)
@@ -311,13 +315,33 @@ func (m *Manager) extractTar(tarPath, destDir string) error {
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
-			linkTarget := filepath.Join(destDir, header.Linkname)
+			linkRel, err := safeArchivePath(filepath.Join(filepath.Dir(rel), header.Linkname))
+			if err != nil {
+				return fmt.Errorf("unsafe symlink %q -> %q: %w", header.Name, header.Linkname, err)
+			}
+			linkTarget := filepath.Join(destDir, linkRel)
 			if err := os.Symlink(linkTarget, target); err != nil && !os.IsExist(err) {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// safeArchivePath converts an archive-relative path into a path that remains
+// below the extraction root. Archives are untrusted input: filepath.Join by
+// itself permits ../ entries to escape the destination directory.
+func safeArchivePath(path string) (string, error) {
+	path = filepath.FromSlash(path)
+	clean := filepath.Clean(path)
+	if clean == "." || clean == "" || filepath.IsAbs(clean) {
+		return "", fmt.Errorf("path is absolute or empty")
+	}
+	rel, err := filepath.Rel(".", clean)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path escapes extraction directory")
+	}
+	return rel, nil
 }
 
 func (m *Manager) installVLLM() error {
@@ -380,7 +404,7 @@ func (m *Manager) Status(ctx context.Context) (ServerStatus, error) {
 	if data, err := os.ReadFile(m.pidFile()); err == nil {
 		var pid int
 		if _, perr := fmt.Sscanf(string(data), "%d", &pid); perr == nil {
-			if p, err := os.FindProcess(pid); err == nil && p != nil && processAlive(p) {
+			if p, err := os.FindProcess(pid); err == nil && p != nil && processAlive(p) && processMatches(p, m.backend) {
 				status.Running = true
 				status.PID = pid
 			} else {
@@ -549,6 +573,9 @@ func (m *Manager) waitForReady(ctx context.Context, pid int, timeout time.Durati
 
 func (m *Manager) findModel() string {
 	modelsDir := m.modelsDir()
+	if strings.TrimSpace(m.model) == "" {
+		return ""
+	}
 
 	if _, err := os.Stat(filepath.Join(modelsDir, m.model)); err == nil {
 		return filepath.Join(modelsDir, m.model)
@@ -562,12 +589,6 @@ func (m *Manager) findModel() string {
 		}
 	}
 
-	entries, _ := os.ReadDir(modelsDir)
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".gguf") || strings.HasSuffix(entry.Name(), ".bin") {
-			return filepath.Join(modelsDir, entry.Name())
-		}
-	}
 	return ""
 }
 
@@ -653,12 +674,6 @@ func (m *Manager) FindModelName() string {
 		return m.model
 	}
 
-	entries, _ := os.ReadDir(m.modelsDir())
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".gguf") || strings.HasSuffix(entry.Name(), ".bin") {
-			return strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
-		}
-	}
 	return m.model
 }
 

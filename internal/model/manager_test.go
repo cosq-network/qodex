@@ -1,6 +1,9 @@
 package model
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -144,5 +147,52 @@ func TestVerifySHA256(t *testing.T) {
 	}
 	if err := verifySHA256(path, strings.Repeat("0", 64)); err == nil {
 		t.Fatal("expected checksum mismatch")
+	}
+}
+
+func TestExtractTarRejectsPathTraversal(t *testing.T) {
+	root := t.TempDir()
+	archivePath := filepath.Join(root, "archive.tar.gz")
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tarWriter := tar.NewWriter(gz)
+	content := []byte("should not escape")
+	if err := tarWriter.WriteHeader(&tar.Header{Name: "package/../../escaped", Mode: 0o644, Size: int64(len(content))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tarWriter.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archivePath, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Manager{}).extractTar(archivePath, filepath.Join(root, "bin")); err == nil {
+		t.Fatal("expected path traversal archive entry to be rejected")
+	}
+	if _, err := os.Stat(filepath.Join(root, "escaped")); !os.IsNotExist(err) {
+		t.Fatalf("archive escaped extraction root: stat error = %v", err)
+	}
+}
+
+func TestFindModelDoesNotFallBackToUnrelatedModel(t *testing.T) {
+	root := t.TempDir()
+	modelsDir := filepath.Join(root, "models")
+	if err := os.MkdirAll(modelsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modelsDir, "other.gguf"), []byte("model"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManager(BackendLlamaCpp, root, "configured.gguf", 8080)
+	if got := mgr.findModel(); got != "" {
+		t.Fatalf("findModel returned unrelated model %q", got)
 	}
 }

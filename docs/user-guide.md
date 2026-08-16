@@ -12,7 +12,7 @@ Qodex is not a sandbox or a security boundary. Review commands, diffs, network d
 - A terminal with true color support.
 - `ripgrep` and `git` installed for the best experience.
 
-Qodex manages backend installation automatically on Linux and macOS. Model downloads are available through `qodex models download`, and the setup wizard helps you select a model. On Windows, WSL2 is the recommended path for managed local backends; native Windows can still connect to a manually managed OpenAI-compatible endpoint. Run `qodex` or `qodex setup` for the interactive wizard.
+Qodex manages backend installation automatically on Linux and macOS. Setup detects the system profile and selects the backend and model without asking you to choose among local runtimes. On Windows, WSL2 is the recommended path for managed local backends; native Windows can still connect to a manually managed OpenAI-compatible endpoint. Run `qodex` or `qodex setup` for automatic setup.
 
 ## Quick Start
 
@@ -112,14 +112,15 @@ Smaller models are useful for testing the app, but they will make more mistakes 
 
 ## Setup
 
-Run `qodex` without arguments for the first time, or run `qodex setup` explicitly, to start the interactive setup wizard:
+Run `qodex` without arguments for the first time, or run `qodex setup` explicitly, to start automatic setup:
 
-1. **Choose Backend** — Select `llama.cpp` (default), `vLLM`, `SGLang`, or an external endpoint
-2. **Install Backend** — On Linux and macOS, Qodex installs llama.cpp automatically. vLLM and SGLang use the selected Python interpreter's `pip`; on Windows, use WSL2 for managed installs or configure a backend manually.
-3. **Choose Model** — For llama.cpp, select a catalog GGUF model. For vLLM/SGLang, enter a Hugging Face model ID.
-4. **Acquire Model** — llama.cpp models can be downloaded with `qodex models download <model-name>`; Python backends download the model through their own runtime.
-5. **Start Server** — Qodex waits for the backend's `/v1/models` endpoint to become ready.
-6. **Create Config** — Only after required installation, model acquisition, and server startup succeed, writes `.qodex/config.toml` and a starter project skill.
+1. **Detect Environment** — Qodex identifies a consumer device, server, or GPU server.
+2. **Select Backend** — Qodex automatically uses the compatible managed backend; the built-in GGUF profiles use `llama.cpp`.
+3. **Select Model** — consumer devices use `deepseek-coder-6.7b-q4_k_m.gguf`, servers use `qwen2.5-coder-7b-q4_k_m.gguf`, and GPU servers use `qwen2.5-coder-32b-q4_k_m.gguf`.
+4. **Confirm Model** — Before any download, Qodex asks you to accept the recommended model, choose another catalog model, or configure Groq/OpenRouter with a BYOK environment variable.
+5. **Acquire Model** — Qodex downloads the selected catalog model only after confirmation. Use `qodex models download <model-name>` for other catalog models.
+6. **Start Server** — Qodex waits for the backend's `/v1/models` endpoint to become ready.
+7. **Create Config** — Only after required installation, model acquisition, and server startup succeed, writes `.qodex/config.toml` and a starter project skill.
 
 If setup fails, correct the reported dependency, model, or endpoint problem and run `qodex doctor`. Use `qodex init` when you want project files without installing a backend.
 
@@ -367,6 +368,8 @@ Run the failing tests and fix the issue.
 
 The interactive TUI supports `/help`, `/model`, `/session`, `/clear`, `/export`, `/theme`, `/settings`, `/jump [CATEGORY]`, `/skills [FILTER]`, `/plan`, `/compact`, `/mcp [NAME]`, `/commit [MESSAGE]`, and `/undo [COMMIT]`. Git commands are translated into normal agent requests, so configured approval and audit policies still apply. `/skill <name>` remains available for explicit skill routing.
 
+Model selection is available without leaving the TUI. Use `/model list` to see downloaded local models and the hosted-provider commands, `/model local NAME` to switch to a downloaded GGUF, or `/model groq` / `/model openrouter` to discover models from the provider using the configured API key. Then use `/model groq MODEL` or `/model openrouter MODEL` to switch. Hosted commands persist only the endpoint, model, and environment-variable name; credentials are loaded from the OS credential store when setup stored one, with the environment variable as a fallback.
+
 `/jump` accepts `user`, `tool`, `approval`, or `error`. `/export` copies formatted JSON to the clipboard. The command palette is available with `Ctrl+P`; transcript search uses `Ctrl+F`, `Ctrl+N` moves to the next match, `Ctrl+Y` copies selected output, and `Ctrl+O` collapses verbose tool details. `Ctrl+J` inserts a newline and `Esc` cancels the current interaction.
 
 The task status area reports the current task, active skill, current tool, inspected-file count, step count, elapsed time, context usage, and compaction status.
@@ -405,7 +408,7 @@ The user directory is platform-native: `$XDG_CONFIG_HOME/qodex` or `~/.config/qo
 
 ## Backend Profiles
 
-Qodex supports multiple OpenAI-compatible local backends. Select the backend during `qodex setup`, or override with `runtime.backend` in `.qodex/config.toml`.
+Qodex supports multiple OpenAI-compatible local backends. Setup chooses the compatible managed backend automatically; advanced users can override it with `runtime.backend` in `.qodex/config.toml`.
 
 ### llama.cpp (Default)
 
@@ -437,6 +440,20 @@ backend = "sglang"
 SGLang is installed with `python -m pip` and serves an OpenAI-compatible endpoint on port `8000` by default. Use a virtual environment before running setup and configure a Hugging Face model ID.
 
 All backends are managed through `qodex serve start|stop|status`. See [llama.cpp Setup Guide](llama-cpp-setup.md) for additional model recommendations.
+
+### Hosted Providers and BYOK
+
+During setup, choose the hosted-provider option to configure Groq or OpenRouter. You may provide an existing environment-variable name or paste the key into the hidden setup prompt. Qodex stores the provider URL, model ID, and environment-variable name in its config, and stores the secret in the operating system credential store when supported; it never writes the API key to TOML.
+
+```sh
+export GROQ_API_KEY="..."
+# or
+export OPENROUTER_API_KEY="..."
+qodex doctor
+qodex chat
+```
+
+The resulting configuration uses `[model.auth]` with `type = "bearer"` and `token_env` pointing to the selected environment variable. Hosted requests load the setup credential from the operating system credential store first, and fall back to that environment variable when no stored credential is available.
 
 ## Native Tool Calls
 
@@ -673,7 +690,7 @@ create_issue = "ask"
 delete_repository = "deny"
 ```
 
-Supported authentication types are `none`, `bearer`, `api_key`, and `oauth`. Tokens are read from environment variables and are never stored in TOML or diagnostic output. Qodex does not perform browser login or dynamic OAuth client registration; obtain the token through the provider's normal flow first:
+Supported authentication types are `none`, `bearer`, `api_key`, and `oauth`. Tokens are read from environment variables or the operating system credential store and are never stored in TOML or diagnostic output. Qodex does not perform browser login or dynamic OAuth client registration; obtain the token through the provider's normal flow first:
 
 ```sh
 export GITHUB_MCP_TOKEN='...'
